@@ -1,0 +1,40 @@
+[general]
+name = "Pi-Decoder"                # custom name shown in UI and idle screen
+
+[stream]
+url = "http://192.168.1.50:8080/stream.m3u8"
+network_caching = 2000       # ms, buffer for WiFi stability
+
+[overlay]
+enabled = false              # toggle per-Pi
+position = "bottom-right"    # top-left, top-right, bottom-left, bottom-right
+font_size = 56               # countdown timer text size (pt)
+font_size_title = 38         # service/item title text size (pt)
+font_size_info = 32          # description and schedule text size (pt)
+transparency = 0.7           # 0.0 = invisible, 1.0 = fully opaque
+timer_mode = "service"       # "service" = countdown to end, "item" = countdown to current item end
+show_description = true
+show_service_end = true
+timezone = "Europe/Copenhagen"
+
+[pco]
+app_id = ""
+secret = ""
+service_type_id = ""         # legacy: single service type
+folder_id = ""               # preferred: discover all service types in folder
+search_mode = "service_type"  # "service_type" or "folder"
+poll_interval = 5            # seconds between PCO API calls
+
+[display]
+hide_cursor = true
+
+[web]
+port = 80
+password_hash = ""           # scrypt hash — set via web UI, leave empty to disable auth
+session_secret = ""          # auto-generated on first run if empty
+
+[network]
+hotspot_ssid = "Pi-Decoder"
+hotspot_password = "pidecodersetup"
+ethernet_timeout = 10           # seconds to wait for ethernet at boot
+wifi_timeout = 40               # seconds to wait for WiFi after ethernet timeout

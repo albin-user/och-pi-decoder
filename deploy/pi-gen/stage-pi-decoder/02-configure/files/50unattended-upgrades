@@ -1,0 +1,11 @@
+// Only security updates - won't break your system
+Unattended-Upgrade::Origins-Pattern {
+    "origin=Debian,codename=${distro_codename},label=Debian-Security";
+    "origin=Raspbian,codename=${distro_codename},label=Raspbian-Security";
+};
+
+// Don't automatically reboot
+Unattended-Upgrade::Automatic-Reboot "false";
+
+// Remove unused dependencies
+Unattended-Upgrade::Remove-Unused-Dependencies "true";

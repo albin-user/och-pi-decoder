@@ -1,0 +1,778 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#fafaf9" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0c0a09" media="(prefers-color-scheme: dark)">
+  <title>{{ config.general.name }}</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect x='10' y='20' width='80' height='55' rx='6' fill='%232563eb'/><rect x='16' y='26' width='68' height='43' rx='2' fill='%23111'/><rect x='35' y='80' width='30' height='6' rx='2' fill='%23888'/></svg>">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="container">
+    <!-- header -->
+    <div class="header">
+      <h1 id="headerName">{{ config.general.name }}</h1>
+      <span id="headerBadge" class="status-badge offline" aria-live="polite">Connecting...</span>
+    </div>
+
+    <!-- toast container -->
+    <div id="toastContainer" aria-live="assertive"></div>
+
+    <!-- setup banner (above tabs, persistent until resolved or dismissed) -->
+    <div id="setupBanner" class="setup-banner" style="display:none">
+      <div class="setup-banner-content">
+        <strong>Setup Required</strong>
+        <ul id="setupChecklist"></ul>
+      </div>
+      <button class="setup-banner-close" onclick="dismissSetupBanner()" aria-label="Dismiss">&times;</button>
+    </div>
+
+    <!-- confirm modal -->
+    <div id="confirmOverlay" class="modal-overlay" style="display:none">
+      <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="confirmMsg">
+        <p id="confirmMsg"></p>
+        <div class="modal-actions">
+          <button class="btn btn-secondary" id="confirmCancel">Cancel</button>
+          <button class="btn btn-danger" id="confirmOk">Confirm</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- tabs -->
+    <div class="tabs">
+      <div class="tab-bar" role="tablist">
+        <button role="tab" id="tab-0" aria-selected="true" aria-controls="panel-0" class="active" onclick="switchTab(0)">
+          <span class="tab-full">Dashboard</span><span class="tab-short">Home</span>
+        </button>
+        <button role="tab" id="tab-1" aria-selected="false" aria-controls="panel-1" onclick="switchTab(1)">
+          <span class="tab-full">Stream</span><span class="tab-short">Stream</span>
+        </button>
+        <button role="tab" id="tab-2" aria-selected="false" aria-controls="panel-2" onclick="switchTab(2)">
+          <span class="tab-full">Overlay</span><span class="tab-short">Overlay</span>
+        </button>
+        <button role="tab" id="tab-3" aria-selected="false" aria-controls="panel-3" onclick="switchTab(3)">
+          <span class="tab-full">Network</span><span class="tab-short">WiFi</span>
+        </button>
+        <button role="tab" id="tab-4" aria-selected="false" aria-controls="panel-4" onclick="switchTab(4)">
+          <span class="tab-full">System</span><span class="tab-short">Sys</span>
+        </button>
+        <button role="tab" id="tab-5" aria-selected="false" aria-controls="panel-5" onclick="switchTab(5)">
+          <span class="tab-full">Help</span><span class="tab-short">Help</span>
+        </button>
+      </div>
+
+      <!-- tab 0: Dashboard -->
+      <div class="tab-panel active" role="tabpanel" id="panel-0" aria-labelledby="tab-0" tabindex="-1">
+        <h3 class="section-heading">Controls</h3>
+
+        <!-- TV group -->
+        <div class="control-group-label">TV</div>
+        <div class="control-grid">
+          <button class="control-card" onclick="cecPowerOn(event)" id="cardTvOn" aria-label="TV Power On">
+            <svg class="control-icon" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><line x1="12" y1="5" x2="12" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            <span class="control-label">TV On</span>
+          </button>
+          <button class="control-card" onclick="cecStandby()" aria-label="TV Standby">
+            <svg class="control-icon" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><line x1="12" y1="5" x2="12" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="12" y1="3" x2="12" y2="7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            <span class="control-label">TV Off</span>
+          </button>
+          <button class="control-card" onclick="cecActiveSource(event)" aria-label="Show Live Video on TV">
+            <svg class="control-icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><polygon points="10,9 16,12 10,15" fill="currentColor"/></svg>
+            <span class="control-label">Live Video</span>
+          </button>
+          <button class="control-card" onclick="cecVolumeUp(event)" aria-label="Volume Up">
+            <svg class="control-icon" aria-hidden="true" viewBox="0 0 24 24"><polygon points="6,9 10,9 14,5 14,19 10,15 6,15" fill="currentColor"/><path d="M17 8.5 C18.3 10 18.3 14 17 15.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            <span class="control-label">Vol +</span>
+          </button>
+          <button class="control-card" onclick="cecVolumeDown(event)" aria-label="Volume Down">
+            <svg class="control-icon" aria-hidden="true" viewBox="0 0 24 24"><polygon points="8,9 12,9 16,5 16,19 12,15 8,15" fill="currentColor"/></svg>
+            <span class="control-label">Vol -</span>
+          </button>
+          <button class="control-card" onclick="cecMute(event)" aria-label="Mute">
+            <svg class="control-icon" aria-hidden="true" viewBox="0 0 24 24"><polygon points="6,9 10,9 14,5 14,19 10,15 6,15" fill="currentColor"/><line x1="18" y1="9" x2="22" y2="15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="22" y1="9" x2="18" y2="15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            <span class="control-label">Mute</span>
+          </button>
+        </div>
+
+        <!-- Stream group -->
+        <div class="control-group-label">Stream</div>
+        <div class="control-grid">
+          <button class="control-card" onclick="restartVideo()" aria-label="Restart Video">
+            <svg class="control-icon" aria-hidden="true" viewBox="0 0 24 24"><polygon points="7,5 19,12 7,19" fill="currentColor"/></svg>
+            <span class="control-label">Play</span>
+          </button>
+          <button class="control-card" onclick="stopVideo()" aria-label="Stop Video">
+            <svg class="control-icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1" fill="currentColor"/></svg>
+            <span class="control-label">Stop</span>
+          </button>
+        </div>
+
+        <!-- Services group -->
+        <div class="control-group-label">Services</div>
+        <div class="control-grid">
+          <button class="control-card" onclick="restartVideo()" aria-label="Restart Video">
+            <svg class="control-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M4 12a8 8 0 0114-5.3" fill="none" stroke="currentColor" stroke-width="2"/><polygon points="18,3 21,7 15,7" fill="currentColor"/><path d="M20 12a8 8 0 01-14 5.3" fill="none" stroke="currentColor" stroke-width="2"/><polygon points="6,21 3,17 9,17" fill="currentColor"/></svg>
+            <span class="control-label">Restart Video</span>
+          </button>
+          <button class="control-card" onclick="restartOverlay()" aria-label="Restart Overlay">
+            <svg class="control-icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><text x="12" y="16" text-anchor="middle" font-size="11" font-weight="bold" fill="currentColor">T</text></svg>
+            <span class="control-label">Restart Overlay</span>
+          </button>
+          <button class="control-card" onclick="restartAll()" aria-label="Restart All">
+            <svg class="control-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M4 12a8 8 0 0114-5.3" fill="none" stroke="currentColor" stroke-width="2"/><polygon points="18,3 21,7 15,7" fill="currentColor"/><path d="M20 12a8 8 0 01-14 5.3" fill="none" stroke="currentColor" stroke-width="2"/><polygon points="6,21 3,17 9,17" fill="currentColor"/></svg>
+            <span class="control-label">Restart All</span>
+          </button>
+          <button class="control-card control-card-danger" onclick="rebootSystem()" aria-label="Reboot">
+            <svg class="control-icon" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><line x1="12" y1="5" x2="12" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            <span class="control-label">Reboot</span>
+          </button>
+        </div>
+
+        <h3 class="section-heading">Status</h3>
+
+        <div class="status-grid">
+          <div class="stat-card">
+            <div class="label">CPU</div>
+            <div class="value" id="statCpu">--%</div>
+          </div>
+          <div class="stat-card">
+            <div class="label">Memory</div>
+            <div class="value" id="statMem">--%</div>
+          </div>
+          <div class="stat-card">
+            <div class="label">Temperature</div>
+            <div class="value" id="statTemp">--&deg;C</div>
+          </div>
+          <div class="stat-card">
+            <div class="label">Uptime</div>
+            <div class="value" id="statUptime">--</div>
+          </div>
+          <div class="stat-card" id="networkCard">
+            <div class="label">Network</div>
+            <div class="value" id="statNetwork">--</div>
+          </div>
+          <div class="stat-card" id="tvStatusCard">
+            <div class="label">TV</div>
+            <div class="value" id="statTv">--</div>
+          </div>
+        </div>
+
+        <h3 class="section-heading">Services</h3>
+
+        <div class="mb-12">
+          <div id="mpvStatusLine"><span class="indicator grey"></span>Connecting...</div>
+        </div>
+        <div class="mb-20">
+          <div id="overlayStatusLine"><span class="indicator grey"></span>Connecting...</div>
+        </div>
+
+        <h3 class="section-heading">Live Preview</h3>
+
+        <div class="preview-container">
+          <img id="previewImg" style="display:none" alt="Live preview">
+          <div id="previewPlaceholder" class="placeholder">Preview will appear when Dashboard is active</div>
+        </div>
+      </div>
+
+      <!-- tab 1: Stream -->
+      <div class="tab-panel" role="tabpanel" id="panel-1" aria-labelledby="tab-1" tabindex="-1">
+        <h3 class="section-heading">Stream Settings</h3>
+
+        <div class="form-group">
+          <label for="streamUrl">Stream URL</label>
+          <input type="text" id="streamUrl" value="{{ config.stream.url }}" inputmode="url" placeholder="rtmp://encoder.local/live/stream or YouTube live URL">
+          <div class="help">Encoder stream (HLS, RTMP, SRT) or YouTube live URL (https://youtube.com/@channel/live)</div>
+        </div>
+
+        <div class="form-group">
+          <label for="networkCaching">Buffer Delay (ms)</label>
+          <input type="number" id="networkCaching" value="{{ config.stream.network_caching }}" min="200" max="30000" step="100" placeholder="3000 (default)">
+          <span class="help">Higher = more stable but more delay. Default: 3000</span>
+          <div class="help" id="cachingHelp">Buffer size &mdash; higher = more stable, lower = less latency</div>
+        </div>
+
+        <button class="btn btn-primary" onclick="saveStreamConfig(this)">Apply &amp; Restart Video</button>
+      </div>
+
+      <!-- tab 2: Overlay -->
+      <div class="tab-panel" role="tabpanel" id="panel-2" aria-labelledby="tab-2" tabindex="-1">
+        <div class="toggle-row">
+          <input type="checkbox" id="overlayEnabled" {% if config.overlay.enabled %}checked{% endif %}>
+          <label for="overlayEnabled">Enable PCO countdown overlay</label>
+        </div>
+
+        <div class="panel-card">
+          <h3 class="section-heading">Planning Center Online (PCO) Connection</h3>
+
+          <div class="form-group">
+            <label for="pcoAppId">App ID</label>
+            <input type="text" id="pcoAppId" placeholder="Leave blank to keep existing" autocomplete="username">
+            <div class="help">From <a href="https://api.planningcenteronline.com/oauth/applications" target="_blank">PCO API</a></div>
+          </div>
+
+          <div class="form-group">
+            <label for="pcoSecret">Secret</label>
+            <div class="password-wrapper">
+              <input type="password" id="pcoSecret" placeholder="Leave blank to keep existing" autocomplete="current-password">
+              <button type="button" class="pw-toggle" onclick="togglePasswordVis(this)" aria-label="Show password">
+                <svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="pcoSearchMode">Search Mode</label>
+            <select id="pcoSearchMode" onchange="toggleSearchMode()">
+              <option value="service_type" {% if config.pco.search_mode == 'service_type' %}selected{% endif %}>Service Type</option>
+              <option value="folder" {% if config.pco.search_mode == 'folder' %}selected{% endif %}>Folder</option>
+            </select>
+            <div class="help">How to find services: by single service type or by folder (discovers all types in folder)</div>
+          </div>
+
+          <div class="form-group" id="serviceTypeGroup">
+            <label for="pcoServiceType">Service Type</label>
+            <select id="pcoServiceType" data-current="{{ config.pco.service_type_id }}">
+              <option value="">Test credentials first</option>
+            </select>
+            <div class="help">Choose after testing credentials</div>
+          </div>
+
+          <div class="form-group" id="folderIdGroup">
+            <label for="pcoFolderId">Folder ID</label>
+            <input type="text" id="pcoFolderId" value="{{ config.pco.folder_id }}">
+            <div class="help">PCO folder ID — discovers all service types in this folder</div>
+          </div>
+
+          <div class="btn-group">
+            <button class="btn btn-secondary" onclick="testPCO()">Test Connection</button>
+            <button class="btn btn-primary" onclick="savePCOConfig(this)">Save Credentials</button>
+          </div>
+
+          <div id="testResults" class="test-results" style="display:none"></div>
+        </div>
+
+        <div class="panel-card">
+          <h3 class="section-heading">Appearance</h3>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="overlayPosition">Position</label>
+              <select id="overlayPosition">
+                <option value="top-left" {% if config.overlay.position == 'top-left' %}selected{% endif %}>Top Left</option>
+                <option value="top-right" {% if config.overlay.position == 'top-right' %}selected{% endif %}>Top Right</option>
+                <option value="bottom-left" {% if config.overlay.position == 'bottom-left' %}selected{% endif %}>Bottom Left</option>
+                <option value="bottom-right" {% if config.overlay.position == 'bottom-right' %}selected{% endif %}>Bottom Right</option>
+              </select>
+              <div class="help">Which corner of the TV screen to show the overlay</div>
+            </div>
+
+            <div class="form-group">
+              <label for="timerMode">Timer Mode</label>
+              <select id="timerMode" onchange="onTimerModeChange()">
+                <option value="service" {% if config.overlay.timer_mode == 'service' %}selected{% endif %}>Service Countdown</option>
+                <option value="item" {% if config.overlay.timer_mode == 'item' %}selected{% endif %}>Current Item</option>
+              </select>
+              <div class="help">Service Countdown = total time remaining in the service. Current Item = time for this item only (goes negative when overtime).</div>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="overlayFontSize">Countdown Size: <span id="fontSizeValue">{{ config.overlay.font_size }}</span>pt</label>
+            <input type="range" id="overlayFontSize" min="20" max="200" value="{{ config.overlay.font_size }}" oninput="document.getElementById('fontSizeValue').textContent=this.value">
+            <div class="help">Size of the main countdown timer numbers on the TV</div>
+          </div>
+
+          <div class="form-group">
+            <label for="overlayFontSizeTitle">Title Size: <span id="fontSizeTitleValue">{{ config.overlay.font_size_title }}</span>pt</label>
+            <input type="range" id="overlayFontSizeTitle" min="10" max="100" value="{{ config.overlay.font_size_title }}" oninput="document.getElementById('fontSizeTitleValue').textContent=this.value">
+            <div class="help">Size of the service or item title text</div>
+          </div>
+
+          <div class="form-group">
+            <label for="overlayFontSizeInfo">Info Size: <span id="fontSizeInfoValue">{{ config.overlay.font_size_info }}</span>pt</label>
+            <input type="range" id="overlayFontSizeInfo" min="10" max="80" value="{{ config.overlay.font_size_info }}" oninput="document.getElementById('fontSizeInfoValue').textContent=this.value">
+            <div class="help">Size of the description and schedule info text</div>
+          </div>
+
+          <div class="form-group">
+            <label for="overlayTransparency">Opacity: <span id="transparencyValue">{{ (config.overlay.transparency * 100)|int }}%</span></label>
+            <input type="range" id="overlayTransparency" min="0" max="1" step="0.05" value="{{ config.overlay.transparency }}" oninput="updateTransparencyDisplay()">
+            <div class="help">How visible the overlay is. 0% = invisible, 100% = fully solid.</div>
+          </div>
+
+          <div class="form-group">
+            <label for="overlayTimezone">Timezone</label>
+            <input type="text" id="overlayTimezone" value="{{ config.overlay.timezone }}" list="tzList">
+            <datalist id="tzList">
+              <option value="America/New_York">
+              <option value="America/Chicago">
+              <option value="America/Denver">
+              <option value="America/Los_Angeles">
+              <option value="America/Phoenix">
+              <option value="America/Anchorage">
+              <option value="Pacific/Honolulu">
+              <option value="America/Toronto">
+              <option value="America/Vancouver">
+              <option value="Europe/London">
+              <option value="Europe/Copenhagen">
+              <option value="Europe/Berlin">
+              <option value="Europe/Paris">
+              <option value="Europe/Amsterdam">
+              <option value="Europe/Oslo">
+              <option value="Europe/Stockholm">
+              <option value="Europe/Helsinki">
+              <option value="Australia/Sydney">
+              <option value="Australia/Melbourne">
+              <option value="Australia/Perth">
+              <option value="Pacific/Auckland">
+              <option value="Asia/Tokyo">
+              <option value="Asia/Seoul">
+              <option value="Asia/Singapore">
+              <option value="Asia/Dubai">
+            </datalist>
+            <div class="help">Used for the "Ends at HH:MM" display. Pick your church's timezone.</div>
+          </div>
+
+          <div class="toggle-row" style="margin-bottom:0">
+            <input type="checkbox" id="showDescription" {% if config.overlay.show_description %}checked{% endif %}>
+            <label for="showDescription" style="min-height:auto;padding:4px 0">Show item description</label>
+          </div>
+          <div class="help" style="margin-top:0;margin-bottom:20px">In Item mode, shows the item's description text (e.g. "3 songs, 15 min") below the title</div>
+
+          <div class="toggle-row" style="margin-bottom:0">
+            <input type="checkbox" id="showServiceEnd" {% if config.overlay.show_service_end %}checked{% endif %}>
+            <label for="showServiceEnd" style="min-height:auto;padding:4px 0">Show service end time</label>
+          </div>
+          <div class="help" style="margin-top:0;margin-bottom:20px">Shows "Ends on time at 11:00" or "Ends 5m behind at 11:05" on the overlay</div>
+
+          <details class="advanced-section">
+            <summary>Advanced</summary>
+            <div class="form-group mt-12">
+              <label for="pcoPollInterval">Poll Interval (seconds)</label>
+              <input type="number" id="pcoPollInterval" value="{{ config.pco.poll_interval }}" min="2" max="60" placeholder="15 (default)">
+              <div class="help">How often to check PCO for updates (2-60s, default 5)</div>
+            </div>
+          </details>
+
+          <div class="btn-group">
+            <button class="btn btn-primary" onclick="saveOverlayConfig(this)">Apply Appearance</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- tab 3: Network -->
+      <div class="tab-panel" role="tabpanel" id="panel-3" aria-labelledby="tab-3" tabindex="-1">
+        <div class="panel-card">
+          <h3 class="section-heading">Connection Status</h3>
+
+          <div class="status-grid">
+            <div class="stat-card" id="netStatusCard">
+              <div class="label">Connection</div>
+              <div class="value" id="netType">--</div>
+            </div>
+            <div class="stat-card">
+              <div class="label">IP Address</div>
+              <div class="value" id="netIp" style="font-size:16px">--</div>
+            </div>
+            <div class="stat-card">
+              <div class="label">Hostname</div>
+              <div class="value" id="netHostname" style="font-size:14px">--</div>
+            </div>
+            <div class="stat-card">
+              <div class="label">WiFi Network</div>
+              <div class="value" id="netSsid">--</div>
+            </div>
+            <div class="stat-card">
+              <div class="label">Signal</div>
+              <div class="value" id="netSignal">--</div>
+            </div>
+          </div>
+
+
+        </div>
+
+        <div class="panel-card">
+          <h3 class="section-heading">Speed Test</h3>
+
+          <button class="btn btn-primary mb-12" id="speedTestBtn" onclick="runSpeedTest(this)">Run Speed Test</button>
+
+          <div id="speedTestResults" style="display:none">
+            <div class="status-grid">
+              <div class="stat-card" id="speedDownloadCard">
+                <div class="label">Download</div>
+                <div class="value" id="speedDownload">--</div>
+              </div>
+              <div class="stat-card">
+                <div class="label">Latency</div>
+                <div class="value" id="speedLatency">--</div>
+              </div>
+              <div class="stat-card">
+                <div class="label">Tested</div>
+                <div class="value" id="speedTimestamp">--</div>
+              </div>
+            </div>
+            <div id="speedWifiMeta" class="help" style="display:none;margin-top:8px"></div>
+          </div>
+
+          <div class="help" style="margin-top:16px">
+            <strong>Streaming Bitrate Reference</strong>
+            <table style="width:100%;margin-top:6px;font-size:13px;border-collapse:collapse">
+              <tr style="border-bottom:1px solid var(--color-border)">
+                <th style="text-align:left;padding:4px 8px 4px 0">Codec</th>
+                <th style="text-align:right;padding:4px 8px">1080p</th>
+                <th style="text-align:right;padding:4px 0 4px 8px">4K</th>
+              </tr>
+              <tr>
+                <td style="padding:4px 8px 4px 0">H.264</td>
+                <td style="text-align:right;padding:4px 8px">5&ndash;8 Mbps</td>
+                <td style="text-align:right;padding:4px 0 4px 8px">15&ndash;25 Mbps</td>
+              </tr>
+              <tr>
+                <td style="padding:4px 8px 4px 0">H.265</td>
+                <td style="text-align:right;padding:4px 8px">3&ndash;5 Mbps</td>
+                <td style="text-align:right;padding:4px 0 4px 8px">8&ndash;15 Mbps</td>
+              </tr>
+            </table>
+          </div>
+
+          <div class="help" style="margin-top:8px;font-size:12px">
+            Speed test downloads ~10 MB from Cloudflare's edge network.
+            <a href="https://www.cloudflare.com/privacypolicy/" target="_blank">Privacy policy</a>
+          </div>
+        </div>
+
+        <div class="panel-card">
+          <h3 class="section-heading">WiFi Networks</h3>
+
+          <button class="btn btn-secondary mb-12" onclick="scanWifi()" id="scanBtn">
+            <span id="scanBtnText">Scan for Networks</span>
+            <span id="scanSpinner" class="spinner" style="display:none"></span>
+          </button>
+
+          <div id="wifiList" class="wifi-list"></div>
+
+          <div id="wifiConnectWarning" class="warning-box connect-warning" style="display:none">
+            <p>The hotspot will disconnect. Look at the TV screen for the new IP address.</p>
+            <p>If it fails, reconnect to the <strong>{{ config.network.hotspot_ssid }}</strong> hotspot.</p>
+            <p>Connecting in <strong id="connectCountdown">10</strong>s... <button class="btn btn-sm" id="cancelWifiConnect" type="button">Cancel</button></p>
+          </div>
+
+          <div class="form-row mt-16">
+            <div class="form-group">
+              <label for="wifiSsid">SSID</label>
+              <input type="text" id="wifiSsid" placeholder="Network name" autocomplete="off">
+            </div>
+            <div class="form-group">
+              <label for="wifiPassword">Password</label>
+              <div class="password-wrapper">
+                <input type="password" id="wifiPassword" placeholder="Network password" autocomplete="current-password">
+                <button type="button" class="pw-toggle" onclick="togglePasswordVis(this)" aria-label="Show password">
+                  <svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <button class="btn btn-primary" onclick="connectWifi()">Connect</button>
+
+          <h3 class="section-heading">Saved Networks</h3>
+
+          <div id="savedNetworks">Loading...</div>
+        </div>
+
+        <div class="panel-card">
+          <h3 class="section-heading">Hotspot Settings</h3>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="hotspotSsid">Hotspot SSID</label>
+              <input type="text" id="hotspotSsid" value="{{ config.network.hotspot_ssid }}" autocomplete="off" placeholder="Pi-Decoder">
+            </div>
+            <div class="form-group">
+              <label for="hotspotPassword">Hotspot Password</label>
+              <input type="text" id="hotspotPassword" value="{{ config.network.hotspot_password }}" autocomplete="new-password">
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="ethTimeout">Ethernet Wait (s)</label>
+              <input type="number" id="ethTimeout" value="{{ config.network.ethernet_timeout }}" min="1" max="120">
+            </div>
+            <div class="form-group">
+              <label for="wifiTimeout">WiFi Wait (s)</label>
+              <input type="number" id="wifiTimeout" value="{{ config.network.wifi_timeout }}" min="1" max="120">
+            </div>
+          </div>
+
+          <div class="btn-group">
+            <button class="btn btn-primary" onclick="saveNetworkConfig(this)">Save Network Settings</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- tab 4: System -->
+      <div class="tab-panel" role="tabpanel" id="panel-4" aria-labelledby="tab-4" tabindex="-1">
+        <h3 class="section-heading">Pi-Decoder Name</h3>
+
+        <div class="form-group">
+          <label for="decoderName">Name</label>
+          <input type="text" id="decoderName" value="{{ config.general.name }}">
+          <div class="help">Shown in header, idle screen, and API status</div>
+        </div>
+
+        <div id="hostnameDisplay" class="help" style="margin-bottom:12px;display:none">
+          Hostname: <code id="sysHostname"></code>
+        </div>
+
+        <button class="btn btn-primary" onclick="saveDecoderName(this)">Save Name</button>
+
+        <h3 class="section-heading">Version</h3>
+
+        <div class="stat-card mb-16" style="display:inline-block">
+          <div class="label">Installed Version</div>
+          <div class="value" id="currentVersion">Loading...</div>
+        </div>
+
+        <h3 class="section-heading">Software Update</h3>
+
+        <div class="form-group">
+          <label for="updateFile">Upload Package (.whl or .tar.gz)</label>
+          <input type="file" id="updateFile" accept=".whl,.tar.gz">
+        </div>
+
+        <button class="btn btn-primary" onclick="uploadUpdate()">Upload &amp; Install</button>
+
+        <div id="updateStatus" class="test-results" style="display:none; margin-top:12px"></div>
+
+        <h3 class="section-heading">Service Logs</h3>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="logService">Service</label>
+            <select id="logService">
+              <option value="pi-decoder">Pi-Decoder</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="logLines">Lines</label>
+            <select id="logLines">
+              <option value="25">25</option>
+              <option value="50" selected>50</option>
+              <option value="100">100</option>
+              <option value="500">500</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="log-toolbar">
+          <button class="btn btn-secondary mr-8" onclick="refreshLogs()">Refresh</button>
+          <label class="toggle-row mb-0">
+            <input type="checkbox" id="logAutoRefresh" onchange="toggleLogAutoRefresh()">
+            Auto-refresh
+          </label>
+          <input type="text" id="logFilter" placeholder="Filter logs..." class="log-filter" oninput="filterLogs()">
+        </div>
+
+        <div class="log-viewer" id="logViewer">Loading...</div>
+
+        <h3 class="section-heading">Config Backup</h3>
+
+        <div class="btn-group mb-16">
+          <a href="/api/config/export" class="btn btn-secondary" download>Download Config</a>
+          <button class="btn btn-secondary" onclick="document.getElementById('importFile').click()">Import Config</button>
+          <input type="file" id="importFile" accept=".toml" style="display:none" onchange="importConfig()">
+        </div>
+
+        <h3 class="section-heading">System</h3>
+
+        <div class="btn-group">
+          <button class="btn btn-danger" onclick="rebootSystem()">Reboot System</button>
+          <button class="btn btn-danger" onclick="shutdownSystem()">Shutdown</button>
+        </div>
+      </div>
+
+      <!-- tab 5: Help -->
+      <div class="tab-panel" role="tabpanel" id="panel-5" aria-labelledby="tab-5" tabindex="-1">
+        <div class="panel-card" style="border-left: 4px solid var(--color-primary)">
+            <h3 class="section-heading" style="margin-top:0">Quick Start</h3>
+            <ol style="margin: 0 0 0 20px; line-height: 2;">
+                <li>Go to <strong>Network</strong> tab &rarr; Connect to WiFi</li>
+                <li>Go to <strong>Stream</strong> tab &rarr; Enter your encoder's stream URL</li>
+                <li>Go to <strong>Overlay</strong> tab &rarr; Add PCO credentials (optional)</li>
+                <li>Go to <strong>Dashboard</strong> &rarr; Verify video is playing</li>
+            </ol>
+        </div>
+
+        <h3 class="section-heading">Planning Center Online Setup</h3>
+
+        <div class="help-section">
+          <p>To connect to PCO Services, you need API credentials:</p>
+          <ol>
+            <li>Go to <a href="https://api.planningcenteronline.com/oauth/applications" target="_blank">api.planningcenteronline.com/oauth/applications</a></li>
+            <li>Click <strong>"New Personal Access Token"</strong></li>
+            <li>Give it a name (e.g., "Pi-Decoder")</li>
+            <li>Copy the <strong>Application ID</strong> and <strong>Secret</strong></li>
+            <li>Paste them in the Overlay tab and click "Test Connection"</li>
+            <li>Select your Service Type and save</li>
+          </ol>
+          <p class="help-note">The overlay automatically tracks the currently-live service. Start a "Live" session in PCO Services to see the countdown.</p>
+        </div>
+
+        <h3 class="section-heading">Network Setup</h3>
+
+        <div class="help-section">
+          <dl>
+            <dt>First Boot (No Ethernet)</dt>
+            <dd>If no Ethernet or saved WiFi is available, the pi-decoder creates a WiFi hotspot. Connect your phone to it &mdash; the setup page opens automatically. Then use the Network tab to connect to your WiFi.</dd>
+
+            <dt>mDNS / Bonjour</dt>
+            <dd>Access the pi-decoder at <code>http://pi-decoder.local</code> from any device on the same network. No IP address needed.</dd>
+
+            <dt>Hotspot Fallback</dt>
+            <dd>If network is lost at boot, the pi-decoder falls back: Ethernet (10s) &rarr; saved WiFi (40s) &rarr; Hotspot. Timeouts are configurable in the Network tab.</dd>
+          </dl>
+        </div>
+
+        <h3 class="section-heading">Stream Settings</h3>
+
+        <div class="help-section">
+          <dl>
+            <dt>Stream URL</dt>
+            <dd>The stream URL from your encoder (OBS, ATEM, vMix, etc.) or a YouTube live stream URL. Supported formats:
+              <br><strong>HLS:</strong> <code>http://192.168.1.50:8080/live/stream.m3u8</code>
+              <br><strong>RTMP:</strong> <code>rtmp://192.168.1.50/live/stream</code>
+              <br><strong>SRT:</strong> <code>srt://192.168.1.50:9000</code>
+              <br><strong>YouTube Live:</strong> <code>https://www.youtube.com/@YourChannel/live</code>
+            </dd>
+
+            <dt>Network Caching (ms)</dt>
+            <dd>How much video to buffer before playing. Higher values (3000-5000ms) = more stable but more delay. Lower values (500-1000ms) = less delay but may stutter on poor networks.</dd>
+
+            <dt>YouTube Live Streams</dt>
+            <dd>Paste a YouTube channel's live URL directly. The decoder uses yt-dlp to extract the stream automatically (capped at 1080p). The channel URL with <code>/live</code> appended works best. If no live stream is active, the player will retry until one starts.</dd>
+          </dl>
+        </div>
+
+        <h3 class="section-heading">Overlay Settings</h3>
+
+        <div class="help-section">
+          <dl>
+            <dt>Enable PCO countdown overlay</dt>
+            <dd>Show/hide the countdown timer on the video output.</dd>
+
+            <dt>Position</dt>
+            <dd>Which corner of the screen to display the overlay.</dd>
+
+            <dt>Timer Mode</dt>
+            <dd>
+              <strong>Service Countdown:</strong> Shows total time remaining in the service. Freezes when an item runs overtime (time extends).<br>
+              <strong>Current Item:</strong> Shows time remaining for the current item only. Goes negative (red) when overtime.
+            </dd>
+
+            <dt>Countdown Size</dt>
+            <dd>Size of the countdown timer text (20-200pt).</dd>
+
+            <dt>Title Size</dt>
+            <dd>Size of the service/item title text (10-100pt).</dd>
+
+            <dt>Info Size</dt>
+            <dd>Size of the description and schedule text (10-80pt).</dd>
+
+            <dt>Opacity</dt>
+            <dd>How visible the overlay is. 100% = fully solid, lower = more transparent.</dd>
+
+            <dt>Timezone</dt>
+            <dd>Used for the "Ends at HH:MM" display. Use IANA format: <code>Europe/Copenhagen</code>, <code>America/New_York</code>, <code>America/Chicago</code>, etc.</dd>
+
+            <dt>Show item description</dt>
+            <dd>In Item mode, shows the item's description text below the title.</dd>
+
+            <dt>Show service end time</dt>
+            <dd>Shows schedule status: "Ends on time at 11:00", "Ends 5m behind at 11:05", etc.</dd>
+          </dl>
+        </div>
+
+        <h3 class="section-heading">CEC TV Control</h3>
+
+        <div class="help-section">
+          <dl>
+            <dt>Dashboard Controls</dt>
+            <dd>Use the TV control cards on the Dashboard tab to power on/off the TV, switch inputs, and adjust volume. These use CEC (Consumer Electronics Control) over HDMI.</dd>
+
+            <dt>HTTP Endpoints</dt>
+            <dd>For automation (Bitfocus Companion, etc.):
+              <code>POST /api/cec/on</code>, <code>POST /api/cec/standby</code>,
+              <code>GET /api/cec/power-status</code>, <code>POST /api/cec/active-source</code>,
+              <code>POST /api/cec/input</code> (body: {"port": 2}),
+              <code>POST /api/cec/volume-up</code>, <code>POST /api/cec/volume-down</code>,
+              <code>POST /api/cec/mute</code>
+            </dd>
+          </dl>
+        </div>
+
+        <h3 class="section-heading">Config Backup &amp; Restore</h3>
+
+        <div class="help-section">
+          <dl>
+            <dt>Download Config</dt>
+            <dd>Exports the current configuration as a TOML file. Sensitive fields (passwords, secrets) are stripped. Use this to back up your settings or clone them to another pi-decoder.</dd>
+
+            <dt>Import Config</dt>
+            <dd>Upload a previously exported TOML file to restore settings. Your existing passwords and secrets are preserved &mdash; only non-sensitive settings are overwritten. The pi-decoder restarts automatically after import.</dd>
+          </dl>
+        </div>
+
+        <h3 class="section-heading">Dark Mode</h3>
+
+        <div class="help-section">
+          <p>The web interface automatically follows your device's dark mode setting. No configuration needed &mdash; if your phone or computer is set to dark mode, the pi-decoder UI will use a dark theme.</p>
+        </div>
+
+        <h3 class="section-heading">System Information</h3>
+
+        <div class="help-section">
+          <dl>
+            <dt>HDMI Force Hotplug</dt>
+            <dd>Forces HDMI output even if no display is detected at boot. Ensures video works with capture cards and matrix switches that don't report EDID properly.</dd>
+
+            <dt>HDMI Mode</dt>
+            <dd>Set to 1080p 60Hz (CEA mode 16). Compatible with most displays and capture devices.</dd>
+
+            <dt>GPU Memory</dt>
+            <dd>256MB dedicated to video decoding. Required for smooth HLS playback.</dd>
+          </dl>
+        </div>
+
+        <h3 class="section-heading">Troubleshooting</h3>
+
+        <div class="help-section">
+          <dl>
+            <dt>No video / black screen</dt>
+            <dd>Check Stream URL is correct. Try opening the URL in a media player on another computer. Check the Logs in the System tab for errors.</dd>
+
+            <dt>Overlay not showing</dt>
+            <dd>Verify PCO credentials with "Test Connection". Make sure a Live session is active in PCO Services. Check that overlay is enabled.</dd>
+
+            <dt>"Not live" message</dt>
+            <dd>No active Live session in PCO. Go to PCO Services and click "Go Live" on your service.</dd>
+
+            <dt>Wrong countdown time</dt>
+            <dd>Check timezone setting. Verify item lengths are set correctly in PCO.</dd>
+
+            <dt>Video stuttering</dt>
+            <dd>Increase Network Caching. Check network connection. Ensure encoder is outputting stable stream.</dd>
+
+            <dt>Can't reach pi-decoder</dt>
+            <dd>Try <code>http://pi-decoder.local</code>. If that doesn't work, check the TV screen for the IP address. If in hotspot mode, connect to the "Pi-Decoder" WiFi first.</dd>
+          </dl>
+        </div>
+      </div>
+    </div><!-- /tabs -->
+  </div><!-- /container -->
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

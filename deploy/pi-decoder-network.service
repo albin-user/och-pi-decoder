@@ -1,0 +1,13 @@
+[Unit]
+Description=Pi-Decoder Network Fallback (Ethernet → WiFi → Hotspot)
+After=NetworkManager.service
+Before=pi-decoder.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/pi-decoder/deploy/pi-decoder-network.sh
+RemainAfterExit=yes
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target

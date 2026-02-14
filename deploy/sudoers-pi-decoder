@@ -1,0 +1,3 @@
+pi ALL=(ALL) NOPASSWD: /bin/systemctl restart pi-decoder
+pi ALL=(ALL) NOPASSWD: /sbin/reboot
+pi ALL=(ALL) NOPASSWD: /usr/bin/hostnamectl set-hostname *
