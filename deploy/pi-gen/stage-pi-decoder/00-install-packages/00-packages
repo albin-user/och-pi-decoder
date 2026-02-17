@@ -1,6 +1,5 @@
 mpv
 python3-pip
-unclutter
 unattended-upgrades
 cec-utils
 avahi-daemon

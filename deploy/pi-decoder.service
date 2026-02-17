@@ -1,17 +1,13 @@
 [Unit]
 Description=Pi-Decoder
-After=network-online.target graphical.target
+After=network-online.target
 Wants=network-online.target
-# Wait for display manager to be fully ready
-After=lightdm.service
 
 [Service]
 Type=simple
 User=pi
 Group=pi
-# Wait for X display to be available
-# Check for X11 socket instead of xdpyinfo (more reliable on Pi 5/Wayland)
-ExecStartPre=/bin/bash -c 'for i in {1..30}; do [ -e /tmp/.X11-unix/X0 ] && break || sleep 1; done'
+SupplementaryGroups=video render
 ExecStart=/opt/pi-decoder/venv/bin/python -m pi_decoder
 WorkingDirectory=/opt/pi-decoder
 Restart=always
@@ -19,8 +15,6 @@ RestartSec=3
 # Restart quickly on failure for seamless recovery
 StartLimitIntervalSec=60
 StartLimitBurst=10
-Environment=DISPLAY=:0
-Environment=XAUTHORITY=/home/pi/.Xauthority
 # Ensure clean shutdown
 TimeoutStopSec=10
 KillMode=mixed
@@ -33,4 +27,4 @@ ReadWritePaths=/etc/pi-decoder /tmp /opt/pi-decoder/venv
 ProtectHome=read-only
 
 [Install]
-WantedBy=graphical.target
+WantedBy=multi-user.target

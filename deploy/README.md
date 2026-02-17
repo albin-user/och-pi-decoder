@@ -4,7 +4,7 @@ Deploy the Pi-Decoder to a Raspberry Pi.
 
 ## Quick Start
 
-1. Flash **Raspberry Pi OS (64-bit) Desktop** (Bookworm) using Raspberry Pi Imager
+1. Flash **Raspberry Pi OS Lite (64-bit)** (Bookworm) using Raspberry Pi Imager
 2. Copy the project to the Pi
 3. Run the setup script:
 

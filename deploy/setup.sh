@@ -29,7 +29,7 @@ SERVICE_USER="${SERVICE_USER:-pi}"
 echo -e "\n${GREEN}[1/7] Installing system packages...${NC}"
 
 apt update
-apt install -y mpv python3-pip unclutter cec-utils avahi-daemon yt-dlp
+apt install -y mpv python3-pip cec-utils avahi-daemon yt-dlp
 
 # ── 3. Install Python package (venv) ─────────────────────────────────
 echo -e "\n${GREEN}[2/7] Installing Pi-Decoder Python package...${NC}"
@@ -92,8 +92,8 @@ rm -f "/home/$SERVICE_USER/.config/autostart/vlc-kiosk.desktop"
 # Sudoers for service user (service restart and reboot without password)
 install -m 440 "$SCRIPT_DIR/sudoers-pi-decoder" /etc/sudoers.d/decoder
 
-# Allow service user to read journal logs
-usermod -aG systemd-journal "$SERVICE_USER" 2>/dev/null || true
+# Allow service user to read journal logs and access DRM devices
+usermod -aG systemd-journal,video,render "$SERVICE_USER" 2>/dev/null || true
 
 # ── 5b. journald log limits ────────────────────────────────────────
 mkdir -p /etc/systemd/journald.conf.d
@@ -115,12 +115,27 @@ set_boot_config() {
     fi
 }
 
+# Legacy firmware HDMI settings (Pi 3 and earlier without KMS driver)
 set_boot_config "hdmi_force_hotplug" "1"
 set_boot_config "hdmi_group" "1"
 set_boot_config "hdmi_mode" "16"
 set_boot_config "disable_overscan" "1"
 set_boot_config "hdmi_drive" "2"
-# gpu_mem removed - Pi 5 ignores this setting (uses dynamic GPU memory allocation)
+
+# KMS/DRM resolution forcing (Pi 4/5 on Bookworm ignore legacy hdmi_* settings)
+# Append video= kernel parameter to cmdline.txt for 1080p60 on the KMS driver
+CMDLINE="/boot/firmware/cmdline.txt"
+[ -f "$CMDLINE" ] || CMDLINE="/boot/cmdline.txt"
+if [ -f "$CMDLINE" ]; then
+    # Remove any existing video= parameter, then append ours
+    sed -i 's/ video=[^ ]*//' "$CMDLINE"
+    sed -i 's/$/ video=HDMI-A-1:1920x1080@60D/' "$CMDLINE"
+    echo "  Set KMS resolution: 1920x1080@60Hz (cmdline.txt)"
+    # Prevent console blanking (no desktop to manage DPMS)
+    if ! grep -q 'consoleblank=' "$CMDLINE"; then
+        sed -i 's/$/ consoleblank=0/' "$CMDLINE"
+    fi
+fi
 
 # Disable swap
 if command -v dphys-swapfile >/dev/null 2>&1; then
@@ -129,135 +144,13 @@ if command -v dphys-swapfile >/dev/null 2>&1; then
     systemctl disable dphys-swapfile 2>/dev/null || true
 fi
 
-# Desktop autologin
+# CLI autologin (no desktop — mpv renders directly via DRM)
 if command -v raspi-config >/dev/null 2>&1; then
-    raspi-config nonint do_boot_behaviour B4 2>/dev/null || true
+    raspi-config nonint do_boot_behaviour B2 2>/dev/null || true
 fi
 
-# ── 7. Kiosk mode hardening ────────────────────────────────────────
-echo -e "\n${GREEN}[6/9] Configuring kiosk mode (cursor, popups, notifications)...${NC}"
-
-AUTOSTART_DIR="/home/$SERVICE_USER/.config/autostart"
-LXSESSION_DIR="/home/$SERVICE_USER/.config/lxsession/LXDE-pi"
-LXPANEL_DIR="/home/$SERVICE_USER/.config/lxpanel/LXDE-pi/panels"
-PCMANFM_DIR="/home/$SERVICE_USER/.config/pcmanfm/LXDE-pi"
-mkdir -p "$AUTOSTART_DIR" "$LXSESSION_DIR" "$LXPANEL_DIR" "$PCMANFM_DIR"
-
-# Hide cursor
-cat > "$AUTOSTART_DIR/unclutter.desktop" << 'EOF'
-[Desktop Entry]
-Type=Application
-Name=Hide Cursor
-Exec=unclutter -idle 0.1 -root
-X-GNOME-Autostart-enabled=true
-EOF
-
-# Disable screen blanking/saver
-cat > "$AUTOSTART_DIR/disable-screensaver.desktop" << 'EOF'
-[Desktop Entry]
-Type=Application
-Name=Disable Screen Blanking
-Exec=sh -c "xset s off 2>/dev/null; xset s noblank 2>/dev/null; xset -dpms 2>/dev/null || true"
-X-GNOME-Autostart-enabled=true
-EOF
-
-# Disable PCManFM desktop (prevents desktop icons and right-click menu)
-cat > "$PCMANFM_DIR/desktop-items-0.conf" << 'EOF'
-[*]
-wallpaper_mode=color
-wallpaper_common=1
-desktop_bg=#000000
-desktop_fg=#ffffff
-desktop_shadow=#000000
-show_documents=0
-show_trash=0
-show_mounts=0
-EOF
-
-# Disable welcome wizard (piwiz) if it exists
-rm -f "$AUTOSTART_DIR/piwiz.desktop" 2>/dev/null || true
-if [ -f /etc/xdg/autostart/piwiz.desktop ]; then
-    mkdir -p /etc/xdg/autostart-disabled
-    mv /etc/xdg/autostart/piwiz.desktop /etc/xdg/autostart-disabled/ 2>/dev/null || true
-fi
-
-# Disable update notifier popup
-for notifier in update-notifier pk-update-icon; do
-    rm -f "$AUTOSTART_DIR/${notifier}.desktop" 2>/dev/null || true
-    if [ -f "/etc/xdg/autostart/${notifier}.desktop" ]; then
-        mkdir -p /etc/xdg/autostart-disabled
-        mv "/etc/xdg/autostart/${notifier}.desktop" /etc/xdg/autostart-disabled/ 2>/dev/null || true
-    fi
-done
-
-# Disable lxplug-* notification plugins
-for plugin in lxplug-bluetooth lxplug-ejecter lxplug-network lxplug-volume lxplug-updater; do
-    rm -f "$AUTOSTART_DIR/${plugin}.desktop" 2>/dev/null || true
-done
-
-# Disable Bluetooth applet autostart
-rm -f "$AUTOSTART_DIR/blueman.desktop" 2>/dev/null || true
-
-# Disable print applet
-rm -f "$AUTOSTART_DIR/print-applet.desktop" 2>/dev/null || true
-
-# Configure LXDE to not show desktop panel (optional - comment out if you want panel)
-# This creates an empty panel config to prevent the taskbar
-cat > "$LXPANEL_DIR/panel" << 'EOF'
-Global {
-  edge=none
-  autohide=1
-  heighttype=percent
-  height=0
-}
-EOF
-
-# Disable LXDE session manager dialogs
-cat > "$LXSESSION_DIR/desktop.conf" << 'EOF'
-[Session]
-window_manager=openbox-lxde-pi
-disable_autostart=no
-polkit/command=lxpolkit
-clipboard/command=lxclipboard
-xsettings_manager/command=build-in
-
-[GTK]
-iNet/DoubleClickTime=400
-iNet/DoubleClickDistance=5
-iNet/DndDragThreshold=8
-iNet/CursorBlinkTime=1200
-iGtk/CanChangeAccels=0
-iGtk/ToolbarStyle=3
-iGtk/MenuImages=1
-iGtk/ButtonImages=1
-iXft/Antialias=1
-sNet/ThemeName=PiXflat
-sNet/IconThemeName=PiXflat
-sGtk/FontName=PibotoLt 12
-iGtk/ToolbarIconSize=3
-sGtk/ColorScheme=
-EOF
-
-# Disable power management dialogs (xfce4-power-manager if present)
-if command -v xfce4-power-manager >/dev/null 2>&1; then
-    mkdir -p "/home/$SERVICE_USER/.config/xfce4/xfconf/xfce-perchannel-xml"
-    cat > "/home/$SERVICE_USER/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-power-manager.xml" << 'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<channel name="xfce4-power-manager" version="1.0">
-  <property name="xfce4-power-manager" type="empty">
-    <property name="show-tray-icon" type="bool" value="false"/>
-    <property name="general-notification" type="bool" value="false"/>
-    <property name="dpms-enabled" type="bool" value="false"/>
-  </property>
-</channel>
-EOF
-fi
-
-# Set ownership
-chown -R "$SERVICE_USER:$SERVICE_USER" "/home/$SERVICE_USER/.config"
-
-# ── 8. Unattended security updates (optional, conservative) ─────────
-echo -e "\n${GREEN}[7/9] Configuring automatic security updates...${NC}"
+# ── 7. Unattended security updates (optional, conservative) ─────────
+echo -e "\n${GREEN}[6/7] Configuring automatic security updates...${NC}"
 
 apt install -y unattended-upgrades 2>/dev/null || true
 
@@ -283,14 +176,14 @@ APT::Periodic::AutocleanInterval "7";
 EOF
 
 # ── 8. mDNS / hostname ───────────────────────────────────────────────
-echo -e "\n${GREEN}[8/9] Setting hostname to 'pi-decoder' (pi-decoder.local)...${NC}"
+echo -e "\n${GREEN}[7/7] Setting hostname to 'pi-decoder' (pi-decoder.local)...${NC}"
 
 hostnamectl set-hostname pi-decoder 2>/dev/null || echo "pi-decoder" > /etc/hostname
 sed -i 's/127\.0\.1\.1.*/127.0.1.1\tpi-decoder/' /etc/hosts 2>/dev/null || true
 systemctl enable avahi-daemon 2>/dev/null || true
 
 # ── Done ─────────────────────────────────────────────────────────────
-echo -e "\n${GREEN}[9/9] Enabling network services...${NC}"
+echo -e "\nEnabling network services..."
 systemctl enable NetworkManager-wait-online.service 2>/dev/null || true
 
 IP=$(hostname -I | awk '{print $1}')

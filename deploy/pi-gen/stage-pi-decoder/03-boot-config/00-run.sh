@@ -10,3 +10,9 @@ hdmi_mode=16
 hdmi_drive=2
 disable_overscan=1
 EOF
+
+# KMS/DRM resolution + prevent console blanking
+CMDLINE="${ROOTFS_DIR}/boot/firmware/cmdline.txt"
+if [ -f "$CMDLINE" ]; then
+    sed -i 's/$/ video=HDMI-A-1:1920x1080@60D consoleblank=0/' "$CMDLINE"
+fi

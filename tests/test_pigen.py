@@ -59,14 +59,22 @@ class TestPigenConfig:
         content = config.read_text()
         assert 'RELEASE="bookworm"' in content, "Should use bookworm release"
 
+    def test_config_stage_list_excludes_stage3(self, pigen_dir: Path):
+        config = pigen_dir / "config"
+        for line in config.read_text().splitlines():
+            if line.startswith("STAGE_LIST="):
+                stages = line.split("=", 1)[1].strip('"').split()
+                assert "stage3" not in stages, "STAGE_LIST should not contain stage3 (Lite image)"
+                break
+
 
 class TestPigenStage:
     """Verify custom stage structure."""
 
-    def test_depends_on_stage3(self, pigen_dir: Path):
+    def test_depends_on_stage2(self, pigen_dir: Path):
         depends = pigen_dir / "stage-pi-decoder" / "DEPENDS"
         content = depends.read_text().strip()
-        assert content == "stage3", "Should depend on stage3"
+        assert content == "stage2", "Should depend on stage2 (Lite base)"
 
     def test_packages_file_exists(self, pigen_dir: Path):
         packages = pigen_dir / "stage-pi-decoder" / "00-install-packages" / "00-packages"
@@ -76,7 +84,7 @@ class TestPigenStage:
         packages = pigen_dir / "stage-pi-decoder" / "00-install-packages" / "00-packages"
         content = packages.read_text()
 
-        required_packages = ["mpv", "python3-pip", "unclutter", "unattended-upgrades"]
+        required_packages = ["mpv", "python3-pip", "unattended-upgrades"]
         for pkg in required_packages:
             assert pkg in content, f"{pkg} should be in packages list"
 
@@ -112,34 +120,11 @@ class TestPigenConfigFiles:
     def files_dir(self, pigen_dir: Path) -> Path:
         return pigen_dir / "stage-pi-decoder" / "02-configure" / "files"
 
-    def test_unclutter_desktop_exists(self, files_dir: Path):
-        assert (files_dir / "unclutter.desktop").exists()
-
-    def test_disable_screensaver_desktop_exists(self, files_dir: Path):
-        assert (files_dir / "disable-screensaver.desktop").exists()
-
-    def test_panel_config_exists(self, files_dir: Path):
-        assert (files_dir / "panel").exists()
-
-    def test_desktop_items_config_exists(self, files_dir: Path):
-        assert (files_dir / "desktop-items-0.conf").exists()
-
-    def test_desktop_conf_exists(self, files_dir: Path):
-        assert (files_dir / "desktop.conf").exists()
-
     def test_unattended_upgrades_exists(self, files_dir: Path):
         assert (files_dir / "50unattended-upgrades").exists()
 
     def test_auto_upgrades_exists(self, files_dir: Path):
         assert (files_dir / "20auto-upgrades").exists()
-
-    def test_desktop_entry_format(self, files_dir: Path):
-        """Verify desktop files have valid format."""
-        for desktop_file in ["unclutter.desktop", "disable-screensaver.desktop"]:
-            content = (files_dir / desktop_file).read_text()
-            assert "[Desktop Entry]" in content
-            assert "Type=Application" in content
-            assert "Exec=" in content
 
 
 class TestPigenScriptContent:
@@ -163,6 +148,12 @@ class TestPigenScriptContent:
         content = script.read_text()
         assert "/boot/firmware/config.txt" in content, "Should use bookworm boot path"
         assert "hdmi_force_hotplug" in content, "Should configure HDMI"
+
+    def test_boot_config_has_drm_resolution(self, pigen_dir: Path):
+        script = pigen_dir / "stage-pi-decoder" / "03-boot-config" / "00-run.sh"
+        content = script.read_text()
+        assert "video=HDMI-A-1" in content, "Should set KMS/DRM resolution"
+        assert "consoleblank=0" in content, "Should disable console blanking"
 
     def test_scripts_use_bash_e(self, pigen_dir: Path):
         """All scripts should use #!/bin/bash -e for error handling."""

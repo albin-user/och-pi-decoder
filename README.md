@@ -76,7 +76,7 @@ A Raspberry Pi-based video decoder with Planning Center Online (PCO) countdown o
 
 #### `MpvManager`
 Manages the mpv media player subprocess:
-- Starts mpv with optimized flags for kiosk display
+- Starts mpv with DRM output for direct hardware rendering (no desktop required)
 - Communicates via JSON IPC over Unix socket (`/tmp/mpv-pi-decoder.sock`)
 - Health monitoring loop auto-restarts crashed processes
 - Stream retry logic with exponential backoff (5s → 60s max)
@@ -683,7 +683,6 @@ och-pi-decoder/
 
 - `mpv` - Media player
 - `python3` - Python 3.11+
-- `unclutter` - Cursor hiding (optional)
 
 ---
 

@@ -32,7 +32,7 @@
 1. **Download Raspberry Pi Imager** from https://www.raspberrypi.com/software/
 2. **Insert SD card** into your computer
 3. **Run Pi Imager:**
-   - OS: **"Raspberry Pi OS (64-bit) Desktop"** (Bookworm)
+   - OS: **"Raspberry Pi OS Lite (64-bit)"** (Bookworm)
    - Storage: Select your SD card
    - Settings (gear icon):
      - Enable SSH (set username: `pi`, password: your choice)
@@ -68,7 +68,7 @@ sudo raspi-config
 ```
 
 **In raspi-config menu:**
-- **1 System Options** → **S5 Boot / Auto Login** → **B4 Desktop Autologin**
+- **1 System Options** → **S5 Boot / Auto Login** → **B2 Console Autologin**
 - **3 Interface Options** → **P2 SSH** → **Yes** (if you want remote access)
 - **5 Localisation Options** → Set your timezone
 - **6 Advanced Options** → **A1 Expand Filesystem**
@@ -114,8 +114,7 @@ sudo ./setup.sh
 - Install mpv media player and dependencies
 - Install Python package with FastAPI web server
 - Configure systemd service for auto-start
-- Set up kiosk mode (hide cursor, disable popups)
-- Configure HDMI output settings
+- Configure HDMI output and DRM display settings
 - Create default configuration file
 
 ---
@@ -293,12 +292,14 @@ sudo reboot
 
 **Solutions:**
 ```bash
-# Check HDMI status
-tvservice -s
+# Check DRM display status
+cat /sys/class/drm/card?-HDMI-A-1/status
 
-# Force HDMI output
-sudo tvservice -p
-sudo tvservice -e "CEA 16"  # 1080p60
+# Check current display mode
+cat /sys/class/drm/card?-HDMI-A-1/modes
+
+# Verify video= kernel parameter
+cat /proc/cmdline | tr ' ' '\n' | grep video
 
 # Reboot to apply changes
 sudo reboot
@@ -353,10 +354,12 @@ which mpv
    mpv --no-video http://your-stream-url
    ```
 
-2. **Display not available:**
+2. **DRM display not available:**
    ```bash
-   # Check DISPLAY is set
-   echo $DISPLAY
+   # Check DRM device permissions
+   ls -la /dev/dri/
+   # Verify user is in video/render groups
+   groups pi
    ```
 
 3. **Network issue:**
