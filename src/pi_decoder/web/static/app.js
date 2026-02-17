@@ -1012,6 +1012,116 @@
     }));
   };
 
+  // ── static IP configuration ──────────────────────────────────────
+
+  window.toggleStaticIp = function (prefix) {
+    var cb = document.getElementById(prefix + "StaticIp");
+    var fields = document.getElementById(prefix + "StaticFields");
+    if (fields) fields.style.display = cb && cb.checked ? "block" : "none";
+  };
+
+  function validateIpv4(ip) {
+    if (!ip) return false;
+    var parts = ip.split(".");
+    if (parts.length !== 4) return false;
+    for (var i = 0; i < 4; i++) {
+      var n = parseInt(parts[i], 10);
+      if (isNaN(n) || n < 0 || n > 255 || parts[i] !== String(n)) return false;
+    }
+    return true;
+  }
+
+  function subnetMaskToPrefix(mask) {
+    if (!validateIpv4(mask)) return 0;
+    var parts = mask.split(".");
+    var num = ((parseInt(parts[0], 10) << 24) |
+               (parseInt(parts[1], 10) << 16) |
+               (parseInt(parts[2], 10) << 8) |
+               parseInt(parts[3], 10)) >>> 0;
+    if (num === 0) return 0;
+    // Valid mask: all 1s followed by all 0s
+    var inverted = (~num) >>> 0;
+    if ((inverted & (inverted + 1)) !== 0) return 0;
+    var bits = 0;
+    while (num & 0x80000000) { bits++; num = (num << 1) >>> 0; }
+    return bits;
+  }
+
+  function validateSubnetMask(mask) {
+    return subnetMaskToPrefix(mask) > 0;
+  }
+
+  window.saveAndApplyStaticIp = function (btn) {
+    var payload = {};
+    var applyInterfaces = [];
+    var prefixes = ["eth", "wifi"];
+
+    // Validate all interfaces before saving anything
+    for (var p = 0; p < prefixes.length; p++) {
+      var prefix = prefixes[p];
+      var cb = document.getElementById(prefix + "StaticIp");
+      var isManual = cb && cb.checked;
+      payload[prefix + "_ip_mode"] = isManual ? "manual" : "auto";
+
+      if (isManual) {
+        var ip = (document.getElementById(prefix + "IpAddress") || {}).value || "";
+        var mask = (document.getElementById(prefix + "SubnetMask") || {}).value || "";
+        var gw = (document.getElementById(prefix + "Gateway") || {}).value || "";
+        var dns = (document.getElementById(prefix + "Dns") || {}).value || "";
+        var label = prefix === "eth" ? "Ethernet" : "WiFi";
+
+        if (!ip) { toast(label + " IP address is required", "error"); return; }
+        if (!validateIpv4(ip)) { toast(label + " IP address is invalid", "error"); return; }
+        if (!mask) { toast(label + " subnet mask is required", "error"); return; }
+        if (!validateSubnetMask(mask)) { toast(label + " subnet mask is invalid (e.g. 255.255.255.0)", "error"); return; }
+        var subnetPrefix = subnetMaskToPrefix(mask);
+        if (!gw) { toast(label + " gateway is required", "error"); return; }
+        if (!validateIpv4(gw)) { toast(label + " gateway is invalid", "error"); return; }
+        if (dns) {
+          var dnsEntries = dns.split(",");
+          for (var i = 0; i < dnsEntries.length; i++) {
+            var entry = dnsEntries[i].trim();
+            if (entry && !validateIpv4(entry)) { toast(label + " DNS '" + entry + "' is invalid", "error"); return; }
+          }
+        }
+
+        payload[prefix + "_ip_address"] = ip + "/" + subnetPrefix;
+        payload[prefix + "_gateway"] = gw;
+        payload[prefix + "_dns"] = dns;
+        applyInterfaces.push(prefix === "eth" ? "ethernet" : "wifi");
+      } else {
+        payload[prefix + "_ip_address"] = "";
+        payload[prefix + "_gateway"] = "";
+        payload[prefix + "_dns"] = "";
+      }
+    }
+
+    // Nothing to do if no interface has static IP enabled
+    if (!applyInterfaces.length) {
+      toast("No static IP configured — both interfaces set to DHCP");
+      return;
+    }
+
+    // Save config first, then apply to interfaces with static IP
+    withLoading(btn, apiPost("/api/config/network", payload).then(function (d) {
+      if (!d.ok) {
+        toast(d.error || "Error saving IP config", "error");
+        return;
+      }
+
+      var promises = applyInterfaces.map(function (iface) {
+        return apiPost("/api/network/apply-ip", { interface: iface }).then(function (r) {
+          if (r.ok) {
+            toast(iface + ": " + (r.message || "applied"));
+          } else if (r.error && r.error.indexOf("No active") === -1) {
+            toast(iface + ": " + r.error, "error");
+          }
+        });
+      });
+      return Promise.all(promises);
+    }));
+  };
+
   // ── password show/hide toggle ─────────────────────────────────────
 
   window.togglePasswordVis = function (btn) {

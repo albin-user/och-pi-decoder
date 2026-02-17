@@ -40,6 +40,8 @@ echo "[pi-decoder-network] Waiting ${ETH_TIMEOUT}s for Ethernet..."
 for i in $(seq 1 "$ETH_TIMEOUT"); do
     if has_connection; then
         echo "[pi-decoder-network] Network connected (Ethernet)."
+        # Single-interface policy: disconnect WiFi when Ethernet is active
+        nmcli device disconnect wlan0 2>/dev/null || true
         exit 0
     fi
     sleep 1

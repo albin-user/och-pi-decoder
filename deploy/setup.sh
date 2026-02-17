@@ -72,6 +72,9 @@ systemctl daemon-reload
 systemctl enable pi-decoder
 systemctl enable pi-decoder-network
 
+# Install single-interface policy dispatcher script
+install -m 755 "$SCRIPT_DIR/10-pi-decoder-single-iface" /etc/NetworkManager/dispatcher.d/
+
 # Remove legacy services if present
 for svc in vlc-video pco-overlay config-web vlc-watchdog vlc-process-monitor x0vncserver church-decoder church-decoder-network decoder decoder-network; do
     if systemctl is-enabled "$svc" 2>/dev/null; then

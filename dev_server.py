@@ -80,7 +80,7 @@ FAKE_NETWORK_INFO = {
     "ip": "192.168.1.100",
     "ssid": "DemoWiFi",
     "signal": 72,
-    "mode": "wifi",
+    "connection_type": "wifi",
     "hotspot_active": False,
     "interface": "en0",
     "gateway": "192.168.1.1",
@@ -152,6 +152,8 @@ def main():
             {"name": "DemoWiFi", "uuid": "abc-123"},
         ]),
         patch("pi_decoder.network.forget_network", new_callable=AsyncMock),
+        patch("pi_decoder.network.apply_static_ip", new_callable=AsyncMock, return_value="IP applied (dev)"),
+        patch("pi_decoder.network.get_active_connection_name", new_callable=AsyncMock, return_value="Wired connection 1"),
         patch("pi_decoder.network.run_speed_test", new_callable=AsyncMock, return_value={
             "download_mbps": 47.23, "latency_ms": 12.3,
             "timestamp": "2025-01-15T10:30:00",

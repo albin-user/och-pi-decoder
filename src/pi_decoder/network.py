@@ -274,6 +274,77 @@ async def forget_network(name: str) -> str:
     return output.strip()
 
 
+# ── Static IP management ─────────────────────────────────────────
+
+
+async def get_active_connection_name(interface_type: str) -> str:
+    """Get the active NM connection name for 'ethernet' or 'wifi'.
+
+    Skips connections named 'Hotspot'. Returns empty string if none found.
+    """
+    output = await _run_nmcli(
+        "-t", "-f", "NAME,TYPE", "connection", "show", "--active",
+    )
+    target_type = "802-3-ethernet" if interface_type == "ethernet" else "802-11-wireless"
+    for line in output.strip().splitlines():
+        parts = line.split(":")
+        if len(parts) < 2:
+            continue
+        name, ctype = parts[0].strip(), parts[1].strip()
+        if ctype == target_type and name.lower() != "hotspot":
+            return name
+    return ""
+
+
+async def apply_static_ip(
+    interface_type: str,
+    mode: str,
+    address: str = "",
+    gateway: str = "",
+    dns: str = "",
+) -> str:
+    """Apply static IP or revert to DHCP on the active connection.
+
+    Args:
+        interface_type: 'ethernet' or 'wifi'
+        mode: 'manual' or 'auto'
+        address: CIDR notation e.g. '192.168.1.100/24'
+        gateway: e.g. '192.168.1.1'
+        dns: comma-separated e.g. '8.8.8.8, 8.8.4.4'
+
+    Returns status message.
+    """
+    conn = await get_active_connection_name(interface_type)
+    if not conn:
+        raise RuntimeError(f"No active {interface_type} connection")
+
+    if mode == "manual":
+        # Convert comma-separated DNS to space-separated for nmcli
+        dns_nmcli = " ".join(d.strip() for d in dns.split(",") if d.strip()) if dns else ""
+        # Fall back to gateway as DNS if no DNS specified
+        if not dns_nmcli and gateway:
+            dns_nmcli = gateway
+        await _run_nmcli(
+            "connection", "modify", conn,
+            "ipv4.method", "manual",
+            "ipv4.addresses", address,
+            "ipv4.gateway", gateway or "",
+            "ipv4.dns", dns_nmcli or "",
+        )
+    else:
+        await _run_nmcli(
+            "connection", "modify", conn,
+            "ipv4.method", "auto",
+            "ipv4.addresses", "",
+            "ipv4.gateway", "",
+            "ipv4.dns", "",
+        )
+
+    # Re-apply the connection to activate changes
+    await _run_nmcli("connection", "up", conn)
+    return f"IP {mode} applied to {conn}"
+
+
 # ── Speed test ────────────────────────────────────────────────────
 
 

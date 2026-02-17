@@ -77,6 +77,14 @@ class NetworkConfig:
     hotspot_password: str = "pidecodersetup"
     ethernet_timeout: int = 10
     wifi_timeout: int = 40
+    eth_ip_mode: str = "auto"
+    eth_ip_address: str = ""
+    eth_gateway: str = ""
+    eth_dns: str = ""
+    wifi_ip_mode: str = "auto"
+    wifi_ip_address: str = ""
+    wifi_gateway: str = ""
+    wifi_dns: str = ""
 
 
 @dataclass
@@ -119,6 +127,62 @@ def _section_to_dict(dc: object) -> dict:
 # ── public API ───────────────────────────────────────────────────────────────
 
 
+def _validate_static_ip(net: NetworkConfig, prefix: str) -> None:
+    """Validate static IP fields for a given prefix (eth/wifi).
+
+    If mode is 'manual', validate address/gateway/dns. Invalid values
+    revert mode to 'auto' and clear the fields.
+    """
+    import ipaddress
+
+    mode = getattr(net, f"{prefix}_ip_mode")
+    if mode not in ("auto", "manual"):
+        setattr(net, f"{prefix}_ip_mode", "auto")
+        mode = "auto"
+
+    if mode != "manual":
+        return
+
+    addr = getattr(net, f"{prefix}_ip_address").strip()
+    gw = getattr(net, f"{prefix}_gateway").strip()
+    dns = getattr(net, f"{prefix}_dns").strip()
+
+    # Validate CIDR address
+    try:
+        if not addr:
+            raise ValueError("empty address")
+        ipaddress.IPv4Interface(addr)
+    except (ValueError, ipaddress.AddressValueError):
+        log.warning("Invalid %s static IP '%s', reverting to DHCP", prefix, addr)
+        setattr(net, f"{prefix}_ip_mode", "auto")
+        setattr(net, f"{prefix}_ip_address", "")
+        setattr(net, f"{prefix}_gateway", "")
+        setattr(net, f"{prefix}_dns", "")
+        return
+
+    # Validate gateway (optional but must be valid if set)
+    if gw:
+        try:
+            ipaddress.IPv4Address(gw)
+        except (ValueError, ipaddress.AddressValueError):
+            log.warning("Invalid %s gateway '%s', clearing", prefix, gw)
+            setattr(net, f"{prefix}_gateway", "")
+
+    # Validate DNS (comma-separated, each must be valid)
+    if dns:
+        valid_dns = []
+        for entry in dns.split(","):
+            entry = entry.strip()
+            if not entry:
+                continue
+            try:
+                ipaddress.IPv4Address(entry)
+                valid_dns.append(entry)
+            except (ValueError, ipaddress.AddressValueError):
+                log.warning("Invalid %s DNS entry '%s', skipping", prefix, entry)
+        setattr(net, f"{prefix}_dns", ", ".join(valid_dns))
+
+
 def validate_config(cfg: Config) -> None:
     """Clamp and validate all config values in place."""
     cfg.network.ethernet_timeout = max(1, min(cfg.network.ethernet_timeout, 120))
@@ -156,6 +220,10 @@ def validate_config(cfg: Config) -> None:
     if cfg.pco.search_mode not in ("service_type", "folder"):
         cfg.pco.search_mode = "service_type"
     cfg.web.port = max(1, min(cfg.web.port, 65535))
+
+    # Static IP validation
+    _validate_static_ip(cfg.network, "eth")
+    _validate_static_ip(cfg.network, "wifi")
 
 
 def load_config(path: str | Path | None = None) -> Config:
