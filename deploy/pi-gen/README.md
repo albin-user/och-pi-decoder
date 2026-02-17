@@ -6,8 +6,8 @@ Build a custom Raspberry Pi OS image with the Decoder pre-installed.
 
 Creates a complete `.img` file that you can flash to an SD card. When booted:
 - Decoder is pre-installed and configured
-- Desktop auto-login enabled
-- Kiosk mode settings applied (no cursor, no panel, black desktop)
+- CLI autologin (no desktop environment)
+- DRM display output configured (mpv renders directly to HDMI)
 - SSH enabled for remote access
 - Security updates configured
 

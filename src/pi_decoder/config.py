@@ -57,11 +57,6 @@ class PCOConfig:
 
 
 @dataclass
-class DisplayConfig:
-    hide_cursor: bool = True
-
-
-@dataclass
 class WebConfig:
     port: int = 80
 
@@ -93,7 +88,6 @@ class Config:
     stream: StreamConfig = field(default_factory=StreamConfig)
     overlay: OverlayConfig = field(default_factory=OverlayConfig)
     pco: PCOConfig = field(default_factory=PCOConfig)
-    display: DisplayConfig = field(default_factory=DisplayConfig)
     web: WebConfig = field(default_factory=WebConfig)
     network: NetworkConfig = field(default_factory=NetworkConfig)
 
@@ -243,8 +237,6 @@ def load_config(path: str | Path | None = None) -> Config:
                 _apply_dict(cfg.overlay, raw["overlay"])
             if "pco" in raw:
                 _apply_dict(cfg.pco, raw["pco"])
-            if "display" in raw:
-                _apply_dict(cfg.display, raw["display"])
             if "web" in raw:
                 _apply_dict(cfg.web, raw["web"])
             if "network" in raw:
@@ -266,7 +258,6 @@ def to_dict_safe(cfg: Config) -> dict:
         "stream": _section_to_dict(cfg.stream),
         "overlay": _section_to_dict(cfg.overlay),
         "pco": _section_to_dict(cfg.pco),
-        "display": _section_to_dict(cfg.display),
         "web": _section_to_dict(cfg.web),
         "network": _section_to_dict(cfg.network),
     }
@@ -285,7 +276,6 @@ def save_config(cfg: Config, path: str | Path | None = None) -> None:
         "stream": _section_to_dict(cfg.stream),
         "overlay": _section_to_dict(cfg.overlay),
         "pco": _section_to_dict(cfg.pco),
-        "display": _section_to_dict(cfg.display),
         "web": _section_to_dict(cfg.web),
         "network": _section_to_dict(cfg.network),
     }

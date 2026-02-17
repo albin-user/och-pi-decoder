@@ -199,7 +199,7 @@ class MpvManager:
     async def take_screenshot(self) -> bytes | None:
         """Capture a screenshot, return JPEG bytes."""
         try:
-            await self._send(["screenshot-to-file", SCREENSHOT_PATH, "window"])
+            await self._send(["screenshot-to-file", SCREENSHOT_PATH, "video"])
             # give mpv a moment to write the file
             await asyncio.sleep(0.3)
             p = Path(SCREENSHOT_PATH)

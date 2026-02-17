@@ -11,7 +11,6 @@ from pi_decoder.config import (
     StreamConfig,
     OverlayConfig,
     PCOConfig,
-    DisplayConfig,
     WebConfig,
     NetworkConfig,
     load_config,
@@ -49,10 +48,6 @@ class TestConfigDefaults:
         assert cfg.folder_id == ""
         assert cfg.poll_interval == 5
 
-    def test_display_defaults(self):
-        cfg = DisplayConfig()
-        assert cfg.hide_cursor is True
-
     def test_web_defaults(self):
         cfg = WebConfig()
         assert cfg.port == 80
@@ -74,7 +69,6 @@ class TestConfigDefaults:
         assert isinstance(cfg.stream, StreamConfig)
         assert isinstance(cfg.overlay, OverlayConfig)
         assert isinstance(cfg.pco, PCOConfig)
-        assert isinstance(cfg.display, DisplayConfig)
         assert isinstance(cfg.web, WebConfig)
         assert isinstance(cfg.network, NetworkConfig)
 
@@ -138,9 +132,6 @@ service_type_id = "12345"
 folder_id = "898807"
 poll_interval = 10
 
-[display]
-hide_cursor = false
-
 [web]
 port = 8080
 """)
@@ -156,7 +147,6 @@ port = 8080
         assert cfg.pco.app_id == "test_id"
         assert cfg.pco.folder_id == "898807"
         assert cfg.pco.poll_interval == 10
-        assert cfg.display.hide_cursor is False
         assert cfg.web.port == 8080
 
 
@@ -416,5 +406,5 @@ class TestToDictSafe:
     def test_other_sections_present(self):
         cfg = Config()
         data = to_dict_safe(cfg)
-        for section in ("general", "stream", "overlay", "pco", "display", "web", "network"):
+        for section in ("general", "stream", "overlay", "pco", "web", "network"):
             assert section in data

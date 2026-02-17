@@ -499,12 +499,6 @@ Configuration file: `/etc/pi-decoder/config.toml`
 | `search_mode` | string | `"service_type"` | `service_type`, `folder` | How to discover services in PCO |
 | `poll_interval` | int | `5` | 2-60 | Seconds between PCO API polls |
 
-### `[display]` Section
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `hide_cursor` | bool | `true` | Hide mouse cursor |
-
 ### `[web]` Section
 
 | Key | Type | Default | Range | Description |
@@ -556,9 +550,6 @@ secret = "xyz789..."
 service_type_id = "123456"
 search_mode = "service_type"
 poll_interval = 5
-
-[display]
-hide_cursor = true
 
 [web]
 port = 80

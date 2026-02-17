@@ -162,9 +162,6 @@ secret = ""
 folder_id = ""
 poll_interval = 5
 
-[display]
-hide_cursor = true
-
 [web]
 port = 80
 

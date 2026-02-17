@@ -348,7 +348,7 @@ class TestScreenshot:
             data = await mgr.take_screenshot()
 
         assert data == fake_jpg
-        mgr._send.assert_awaited_once_with(["screenshot-to-file", str(fake_path), "window"])
+        mgr._send.assert_awaited_once_with(["screenshot-to-file", str(fake_path), "video"])
         path_inst.unlink.assert_called_once_with(missing_ok=True)
 
     async def test_take_screenshot_no_file(self):
