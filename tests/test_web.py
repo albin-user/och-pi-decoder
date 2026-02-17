@@ -558,9 +558,85 @@ class TestServiceTypes:
         assert resp.json()["ok"] is False
 
 
+class TestHotspotGuard:
+    @patch("pi_decoder.network.start_hotspot", new_callable=AsyncMock)
+    @patch("pi_decoder.network.get_network_info_sync", return_value={
+        "connection_type": "ethernet", "hotspot_active": False,
+    })
+    def test_hotspot_rejected_when_ethernet(self, _mock_net, _mock_start, client):
+        resp = client.post("/api/network/hotspot/start")
+        assert resp.status_code == 400
+        data = resp.json()
+        assert data["ok"] is False
+        assert "ethernet" in data["error"]
+        _mock_start.assert_not_awaited()
+
+    @patch("pi_decoder.network.start_hotspot", new_callable=AsyncMock)
+    @patch("pi_decoder.network.get_network_info_sync", return_value={
+        "connection_type": "wifi", "hotspot_active": False,
+    })
+    def test_hotspot_rejected_when_wifi(self, _mock_net, _mock_start, client):
+        resp = client.post("/api/network/hotspot/start")
+        assert resp.status_code == 400
+        data = resp.json()
+        assert data["ok"] is False
+        assert "wifi" in data["error"]
+
+    @patch("pi_decoder.network.start_hotspot", new_callable=AsyncMock)
+    @patch("pi_decoder.network.get_network_info_sync", return_value={
+        "connection_type": "none", "hotspot_active": False,
+    })
+    def test_hotspot_allowed_when_disconnected(self, _mock_net, _mock_start, client):
+        resp = client.post("/api/network/hotspot/start")
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+
+
+class TestStaticIpConfig:
+    def test_save_static_ip_config(self, client, config):
+        resp = client.post("/api/config/network", json={
+            "eth_ip_mode": "manual",
+            "eth_ip_address": "192.168.1.100/24",
+            "eth_gateway": "192.168.1.1",
+            "eth_dns": "8.8.8.8",
+        })
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+        assert config.network.eth_ip_mode == "manual"
+        assert config.network.eth_ip_address == "192.168.1.100/24"
+
+    @patch("pi_decoder.network.apply_static_ip", new_callable=AsyncMock,
+           return_value="IP manual applied to Wired connection 1")
+    def test_apply_ip_success(self, _mock_apply, client):
+        resp = client.post("/api/network/apply-ip", json={"interface": "ethernet"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert "applied" in data["message"]
+
+    @patch("pi_decoder.network.apply_static_ip", new_callable=AsyncMock,
+           side_effect=RuntimeError("No active ethernet connection"))
+    def test_apply_ip_no_connection(self, _mock_apply, client):
+        resp = client.post("/api/network/apply-ip", json={"interface": "ethernet"})
+        assert resp.status_code == 500
+        data = resp.json()
+        assert data["ok"] is False
+        assert "No active" in data["error"]
+
+    def test_apply_ip_invalid_interface(self, client):
+        resp = client.post("/api/network/apply-ip", json={"interface": "hotspot"})
+        assert resp.status_code == 400
+        data = resp.json()
+        assert data["ok"] is False
+        assert "Invalid interface" in data["error"]
+
+
 class TestHotspotEndpoints:
     @patch("pi_decoder.network.start_hotspot", new_callable=AsyncMock)
-    def test_start_hotspot(self, _mock, client):
+    @patch("pi_decoder.network.get_network_info_sync", return_value={
+        "connection_type": "none", "hotspot_active": False,
+    })
+    def test_start_hotspot(self, _mock_net, _mock_start, client):
         resp = client.post("/api/network/hotspot/start")
         assert resp.status_code == 200
         assert resp.json()["ok"] is True

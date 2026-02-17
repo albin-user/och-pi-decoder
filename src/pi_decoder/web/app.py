@@ -34,6 +34,24 @@ _WEB_DIR = Path(__file__).parent
 _TEMPLATES = Jinja2Templates(directory=str(_WEB_DIR / "templates"))
 
 
+def _cidr_to_subnet_mask(cidr_address: str) -> str:
+    """Convert a CIDR address like '192.168.1.100/24' to its subnet mask '255.255.255.0'.
+
+    Returns '255.255.255.0' as default if input has no prefix or is invalid.
+    """
+    try:
+        if "/" in cidr_address:
+            prefix = int(cidr_address.split("/")[1])
+            bits = (0xFFFFFFFF << (32 - prefix)) & 0xFFFFFFFF
+            return f"{(bits >> 24) & 0xFF}.{(bits >> 16) & 0xFF}.{(bits >> 8) & 0xFF}.{bits & 0xFF}"
+    except (ValueError, IndexError):
+        pass
+    return "255.255.255.0"
+
+
+_TEMPLATES.env.filters["subnet_mask"] = _cidr_to_subnet_mask
+
+
 def _system_info() -> dict:
     """Gather CPU, memory, temperature, uptime."""
     try:
@@ -526,7 +544,16 @@ def create_app(
 
     @app.post("/api/network/hotspot/start")
     async def api_network_hotspot_start():
-        from pi_decoder.network import start_hotspot
+        from pi_decoder.network import start_hotspot, get_network_info_sync
+        # Hotspot guard: reject if Ethernet or WiFi is active
+        try:
+            net = await asyncio.to_thread(get_network_info_sync)
+            if net.get("connection_type") in ("ethernet", "wifi"):
+                return JSONResponse({"ok": False,
+                    "error": "Cannot start hotspot while connected via "
+                             + net["connection_type"] + ". Disconnect first."}, 400)
+        except Exception:
+            pass
         try:
             await start_hotspot(config.network.hotspot_ssid, config.network.hotspot_password)
         except Exception as e:
@@ -575,10 +602,35 @@ def create_app(
             config.network.ethernet_timeout = int(data["ethernet_timeout"])
         if "wifi_timeout" in data:
             config.network.wifi_timeout = int(data["wifi_timeout"])
+        # Static IP fields (eth_ and wifi_ prefixes)
+        for prefix in ("eth", "wifi"):
+            for suffix in ("ip_mode", "ip_address", "gateway", "dns"):
+                key = f"{prefix}_{suffix}"
+                if key in data:
+                    setattr(config.network, key, str(data[key]))
         validate_config(config)
         save_config(config, config_path)
         log.info("Config updated: network settings changed")
         return {"ok": True}
+
+    @app.post("/api/network/apply-ip")
+    async def api_network_apply_ip(request: Request):
+        from pi_decoder.network import apply_static_ip
+        data = await request.json()
+        iface = data.get("interface", "")
+        if iface not in ("ethernet", "wifi"):
+            return JSONResponse({"ok": False, "error": "Invalid interface (ethernet or wifi)"}, 400)
+        prefix = "eth" if iface == "ethernet" else "wifi"
+        mode = getattr(config.network, f"{prefix}_ip_mode")
+        address = getattr(config.network, f"{prefix}_ip_address")
+        gateway = getattr(config.network, f"{prefix}_gateway")
+        dns = getattr(config.network, f"{prefix}_dns")
+        try:
+            msg = await apply_static_ip(iface, mode, address, gateway, dns)
+        except Exception as e:
+            return JSONResponse({"ok": False, "error": str(e)}, 500)
+        mpv.reset_stream_retry()
+        return {"ok": True, "message": msg}
 
     @app.get("/api/network/speedtest")
     async def api_network_speedtest_get():

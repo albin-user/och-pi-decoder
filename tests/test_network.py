@@ -212,6 +212,83 @@ class TestSavedNetworks:
         mock.assert_called_once_with("connection", "delete", "OldWiFi")
 
 
+class TestGetActiveConnectionName:
+
+    @pytest.mark.asyncio
+    async def test_finds_ethernet(self):
+        output = "Wired connection 1:802-3-ethernet\nHotspot:802-11-wireless\n"
+        with patch("pi_decoder.network._run_nmcli", new_callable=AsyncMock,
+                    return_value=output):
+            result = await network.get_active_connection_name("ethernet")
+        assert result == "Wired connection 1"
+
+    @pytest.mark.asyncio
+    async def test_finds_wifi_skips_hotspot(self):
+        output = "Hotspot:802-11-wireless\nMyWiFi:802-11-wireless\n"
+        with patch("pi_decoder.network._run_nmcli", new_callable=AsyncMock,
+                    return_value=output):
+            result = await network.get_active_connection_name("wifi")
+        assert result == "MyWiFi"
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_when_not_found(self):
+        output = "Hotspot:802-11-wireless\n"
+        with patch("pi_decoder.network._run_nmcli", new_callable=AsyncMock,
+                    return_value=output):
+            result = await network.get_active_connection_name("ethernet")
+        assert result == ""
+
+
+class TestApplyStaticIp:
+
+    @pytest.mark.asyncio
+    async def test_apply_manual(self):
+        calls = []
+
+        async def mock_nmcli(*args):
+            calls.append(args)
+            if args[:2] == ("-t", "-f"):
+                return "MyEthernet:802-3-ethernet\n"
+            return "ok"
+
+        with patch("pi_decoder.network._run_nmcli", side_effect=mock_nmcli):
+            result = await network.apply_static_ip(
+                "ethernet", "manual", "192.168.1.100/24", "192.168.1.1", "8.8.8.8, 1.1.1.1",
+            )
+
+        assert "applied" in result.lower()
+        # Should have called modify with manual, then connection up
+        modify_call = calls[1]
+        assert "manual" in modify_call
+        assert "192.168.1.100/24" in modify_call
+        up_call = calls[2]
+        assert up_call == ("connection", "up", "MyEthernet")
+
+    @pytest.mark.asyncio
+    async def test_apply_auto(self):
+        calls = []
+
+        async def mock_nmcli(*args):
+            calls.append(args)
+            if args[:2] == ("-t", "-f"):
+                return "MyEthernet:802-3-ethernet\n"
+            return "ok"
+
+        with patch("pi_decoder.network._run_nmcli", side_effect=mock_nmcli):
+            result = await network.apply_static_ip("ethernet", "auto")
+
+        assert "applied" in result.lower()
+        modify_call = calls[1]
+        assert "auto" in modify_call
+
+    @pytest.mark.asyncio
+    async def test_no_active_connection_raises(self):
+        with patch("pi_decoder.network._run_nmcli", new_callable=AsyncMock,
+                    return_value="Hotspot:802-11-wireless\n"):
+            with pytest.raises(RuntimeError, match="No active ethernet"):
+                await network.apply_static_ip("ethernet", "manual", "192.168.1.100/24")
+
+
 class TestGetIpForInterface:
 
     def test_returns_ip(self):

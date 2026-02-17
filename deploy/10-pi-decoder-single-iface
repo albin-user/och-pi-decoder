@@ -1,0 +1,52 @@
+#!/bin/bash
+# Pi-Decoder: Single interface policy. Ethernet > WiFi > Hotspot.
+# WiFi radio stays on (scanning works), but connection is dropped when Ethernet is active.
+# If all connections lost for 30s, auto-start hotspot.
+IFACE=$1
+ACTION=$2
+CONFIG="/etc/pi-decoder/config.toml"
+
+# Read hotspot config
+SSID="Pi-Decoder"
+PASS="pidecodersetup"
+if [ -f "$CONFIG" ]; then
+    val=$(awk -F'"' '/^hotspot_ssid\s*=/ {print $2}' "$CONFIG" 2>/dev/null || true)
+    [ -n "$val" ] && SSID="$val"
+    val=$(awk -F'"' '/^hotspot_password\s*=/ {print $2}' "$CONFIG" 2>/dev/null || true)
+    [ -n "$val" ] && PASS="$val"
+fi
+
+is_connected() {
+    nmcli -t -f STATE general status 2>/dev/null | grep -q "^connected"
+}
+
+if [[ "$IFACE" == eth* ]]; then
+    case "$ACTION" in
+        up)
+            # Ethernet connected — disconnect WiFi (not hotspot)
+            WIFI_CONN=$(nmcli -t -f NAME,TYPE connection show --active \
+                | grep 802-11-wireless | grep -iv hotspot | cut -d: -f1)
+            [ -n "$WIFI_CONN" ] && nmcli connection down "$WIFI_CONN" 2>/dev/null || true
+            ;;
+        down)
+            # Ethernet lost — try reconnecting WiFi
+            nmcli device connect wlan0 2>/dev/null || true
+            ;;
+    esac
+fi
+
+# Runtime hotspot fallback: if ALL connections lost, wait 30s then start hotspot
+if [ "$ACTION" = "down" ]; then
+    (
+        for i in $(seq 1 10); do
+            sleep 3
+            if is_connected; then
+                exit 0  # Connection restored, abort
+            fi
+        done
+        # Still disconnected after 30s — start hotspot
+        nmcli connection delete Hotspot 2>/dev/null || true
+        nmcli device wifi hotspot ifname wlan0 ssid "$SSID" password "$PASS" 2>/dev/null || true
+        nmcli connection modify Hotspot ipv4.dns 10.42.0.1 2>/dev/null || true
+    ) &
+fi

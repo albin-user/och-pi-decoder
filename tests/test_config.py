@@ -279,6 +279,86 @@ wifi_timeout = 999
         assert cfg.network.wifi_timeout == 120  # maximum
 
 
+class TestStaticIpValidation:
+    """Test static IP validation in config."""
+
+    def test_static_ip_defaults(self):
+        cfg = NetworkConfig()
+        assert cfg.eth_ip_mode == "auto"
+        assert cfg.eth_ip_address == ""
+        assert cfg.wifi_ip_mode == "auto"
+
+    def test_valid_static_ip_roundtrip(self, tmp_config: Path):
+        tmp_config.write_text("""
+[network]
+eth_ip_mode = "manual"
+eth_ip_address = "192.168.1.100/24"
+eth_gateway = "192.168.1.1"
+eth_dns = "8.8.8.8, 8.8.4.4"
+""")
+        cfg = load_config(tmp_config)
+        assert cfg.network.eth_ip_mode == "manual"
+        assert cfg.network.eth_ip_address == "192.168.1.100/24"
+        assert cfg.network.eth_gateway == "192.168.1.1"
+        assert cfg.network.eth_dns == "8.8.8.8, 8.8.4.4"
+
+    def test_invalid_ip_reverts_to_dhcp(self, tmp_config: Path):
+        tmp_config.write_text("""
+[network]
+eth_ip_mode = "manual"
+eth_ip_address = "not-an-ip"
+eth_gateway = "192.168.1.1"
+eth_dns = "8.8.8.8"
+""")
+        cfg = load_config(tmp_config)
+        assert cfg.network.eth_ip_mode == "auto"
+        assert cfg.network.eth_ip_address == ""
+        assert cfg.network.eth_gateway == ""
+        assert cfg.network.eth_dns == ""
+
+    def test_invalid_gateway_cleared(self, tmp_config: Path):
+        tmp_config.write_text("""
+[network]
+eth_ip_mode = "manual"
+eth_ip_address = "192.168.1.100/24"
+eth_gateway = "not.valid"
+eth_dns = "8.8.8.8"
+""")
+        cfg = load_config(tmp_config)
+        assert cfg.network.eth_ip_mode == "manual"
+        assert cfg.network.eth_gateway == ""
+        assert cfg.network.eth_dns == "8.8.8.8"
+
+    def test_invalid_dns_entries_skipped(self, tmp_config: Path):
+        tmp_config.write_text("""
+[network]
+wifi_ip_mode = "manual"
+wifi_ip_address = "10.0.0.5/16"
+wifi_gateway = "10.0.0.1"
+wifi_dns = "8.8.8.8, bad-dns, 1.1.1.1"
+""")
+        cfg = load_config(tmp_config)
+        assert cfg.network.wifi_ip_mode == "manual"
+        assert cfg.network.wifi_dns == "8.8.8.8, 1.1.1.1"
+
+    def test_empty_address_reverts_to_dhcp(self, tmp_config: Path):
+        tmp_config.write_text("""
+[network]
+eth_ip_mode = "manual"
+eth_ip_address = ""
+""")
+        cfg = load_config(tmp_config)
+        assert cfg.network.eth_ip_mode == "auto"
+
+    def test_invalid_mode_reverts_to_auto(self, tmp_config: Path):
+        tmp_config.write_text("""
+[network]
+eth_ip_mode = "bogus"
+""")
+        cfg = load_config(tmp_config)
+        assert cfg.network.eth_ip_mode == "auto"
+
+
 class TestSaveConfig:
     """Test configuration saving."""
 

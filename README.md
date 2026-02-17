@@ -106,25 +106,33 @@ Dataclass-based configuration with TOML persistence:
 
 ## REST API Reference
 
-Base URL: `http://<PI-IP>/`
+Base URL: `http://<PI-IP>/` (default port 80)
 
-### Status Endpoints
+All POST endpoints accept `application/json` unless noted. All fields are optional — only send the fields you want to change. Responses return `{"ok": true}` on success or `{"ok": false, "error": "..."}` on failure.
+
+### Status & Info
+
+#### `GET /api/health`
+Health check.
+
+**Response:** `{"status": "ok"}`
 
 #### `GET /api/status`
-Returns complete system status.
+Full system status including video player, overlay, system metrics, and network.
 
 **Response:**
 ```json
 {
+  "name": "Pi-Decoder",
   "mpv": {
     "alive": true,
-    "paused": false,
-    "idle": false,
     "playing": true,
-    "stream_url": "http://encoder.local/stream.m3u8"
+    "idle": false,
+    "stream_url": "rtmp://encoder.local/live/stream"
   },
   "overlay": {
     "enabled": true,
+    "credentials_set": true,
     "is_live": true,
     "finished": false,
     "plan_title": "Sunday Service",
@@ -140,54 +148,80 @@ Returns complete system status.
     "temperature": 52.3,
     "uptime": "2d 5h",
     "uptime_seconds": 190800
+  },
+  "network": {
+    "connection_type": "ethernet",
+    "ip": "192.168.1.100",
+    "ssid": "",
+    "hotspot_active": false,
+    "signal": 0
   }
 }
 ```
 
+#### `GET /api/version`
+Installed package version.
+
+**Response:** `{"version": "1.0.0"}`
+
 #### `GET /api/screenshot`
 Captures current HDMI output (video + overlays) as JPEG.
 
-**Response:** `image/jpeg` binary data or `{"error": "Screenshot failed"}`
+**Response:** `image/jpeg` binary data, or `500` with `{"ok": false, "error": "Screenshot failed"}`
 
 #### `GET /api/logs?service=pi-decoder&lines=50`
-Returns recent systemd journal logs.
+Recent systemd journal logs.
 
 **Parameters:**
-- `service` (string, default: `pi-decoder`) - systemd unit name
-- `lines` (int, default: 50, max: 1000) - number of lines
+- `service` (string, default: `pi-decoder`) — systemd unit name
+- `lines` (int, default: 50, max: 1000) — number of log lines
 
-### Configuration Endpoints
+**Response:** `{"service": "pi-decoder", "logs": "..."}`
+
+### Configuration
+
+#### `POST /api/config/general`
+Set decoder name (also updates system hostname).
+
+**Request:**
+```json
+{"name": "Sanctuary"}
+```
+
+**Response:** `{"ok": true, "hostname": "sanctuary"}`
 
 #### `POST /api/config/stream`
-Update stream settings.
+Update stream settings. Automatically restarts video on save from the web UI.
 
 **Request:**
 ```json
 {
-  "url": "http://encoder.local/stream.m3u8",
+  "url": "rtmp://encoder.local/live/stream",
   "network_caching": 2000
 }
 ```
 
 #### `POST /api/config/overlay`
-Update overlay settings.
+Update overlay appearance settings.
 
 **Request:**
 ```json
 {
   "enabled": true,
   "position": "bottom-right",
-  "font_size": 56,
+  "font_size": 96,
+  "font_size_title": 38,
+  "font_size_info": 32,
   "transparency": 0.7,
   "timer_mode": "service",
-  "show_description": true,
+  "show_description": false,
   "show_service_end": true,
   "timezone": "America/Chicago"
 }
 ```
 
 #### `POST /api/config/pco`
-Update PCO credentials.
+Update PCO credentials and search settings.
 
 **Request:**
 ```json
@@ -195,54 +229,34 @@ Update PCO credentials.
   "app_id": "your-app-id",
   "secret": "your-secret",
   "service_type_id": "123456",
-  "search_mode": "service_type"
+  "search_mode": "service_type",
+  "folder_id": "",
+  "poll_interval": 5
 }
 ```
 
-### PCO Endpoints
-
-#### `POST /api/test-pco`
-Test PCO credentials without saving.
+#### `POST /api/config/network`
+Update all network settings: hotspot, boot timeouts, and static IP configuration.
 
 **Request:**
 ```json
 {
-  "app_id": "your-app-id",
-  "secret": "your-secret"
+  "hotspot_ssid": "Pi-Decoder",
+  "hotspot_password": "pidecodersetup",
+  "ethernet_timeout": 10,
+  "wifi_timeout": 40,
+  "eth_ip_mode": "manual",
+  "eth_ip_address": "192.168.1.100/24",
+  "eth_gateway": "192.168.1.1",
+  "eth_dns": "8.8.8.8, 8.8.4.4",
+  "wifi_ip_mode": "auto",
+  "wifi_ip_address": "",
+  "wifi_gateway": "",
+  "wifi_dns": ""
 }
 ```
 
-**Response:**
-```json
-{
-  "success": true,
-  "service_types": [
-    {"id": "123456", "name": "Sunday Service", "frequency": "Weekly"}
-  ]
-}
-```
-
-#### `GET /api/service-types`
-List available PCO service types (requires saved credentials).
-
-### Control Endpoints
-
-#### `POST /api/restart/video`
-Restart mpv process only.
-
-#### `POST /api/restart/overlay`
-Restart PCO overlay updater only.
-
-#### `POST /api/restart/all`
-Restart both mpv and overlay.
-
-#### `POST /api/reboot`
-Reboot the entire Raspberry Pi.
-
-#### `POST /api/shutdown`
-Shut down the Raspberry Pi. Requires physical access to power it back on.
-
-### Configuration Backup Endpoints
+`*_ip_mode` accepts `"auto"` (DHCP) or `"manual"` (static). When manual, provide `*_ip_address` in CIDR notation (e.g. `192.168.1.100/24`). This saves the config — call `/api/network/apply-ip` to activate it.
 
 #### `GET /api/config/export`
 Download the current configuration as a TOML file. Sensitive fields (`pco.secret`) are stripped.
@@ -252,15 +266,195 @@ Download the current configuration as a TOML file. Sensitive fields (`pco.secret
 #### `POST /api/config/import`
 Upload a TOML configuration file. Validates and merges settings, preserving existing secrets.
 
-**Request:** `multipart/form-data` with `file` field containing `.toml` file
+**Request:** `multipart/form-data` with `file` field containing a `.toml` file (max 64 KB)
+
+### PCO (Planning Center Online)
+
+#### `POST /api/test-pco`
+Test PCO credentials without saving.
+
+**Request:**
+```json
+{
+  "app_id": "your-app-id",
+  "secret": "your-secret",
+  "service_type_id": "123456"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "service_types": [
+    {"id": "123456", "name": "Sunday Service"}
+  ]
+}
+```
+
+#### `GET /api/service-types`
+List available PCO service types (requires saved credentials).
+
+**Response:** `{"service_types": [{"id": "123456", "name": "Sunday Service"}]}`
+
+### Network
+
+#### `GET /api/network/status`
+Current network connection info.
+
+**Response:**
+```json
+{
+  "connection_type": "wifi",
+  "ip": "192.168.1.100",
+  "ssid": "ChurchWiFi",
+  "hotspot_active": false,
+  "signal": 72
+}
+```
+
+`connection_type` is one of: `"ethernet"`, `"wifi"`, `"hotspot"`, `"none"`.
+
+#### `GET /api/network/wifi-scan`
+Scan for available WiFi networks (~2s delay for radio scan).
+
+**Response:**
+```json
+{
+  "networks": [
+    {"ssid": "ChurchWiFi", "signal": 85, "security": "WPA2", "in_use": true},
+    {"ssid": "Guest", "signal": 45, "security": "WPA2", "in_use": false}
+  ]
+}
+```
+
+#### `POST /api/network/wifi-connect`
+Connect to a WiFi network. Stops hotspot first if active.
+
+**Request:**
+```json
+{"ssid": "ChurchWiFi", "password": "mypassword"}
+```
+
+SSID must be 1-32 bytes. Password must be 8-63 characters (or empty for open networks).
+
+#### `GET /api/network/wifi/saved`
+List saved WiFi connection names.
+
+**Response:** `{"networks": ["ChurchWiFi", "Office"]}`
+
+#### `POST /api/network/wifi/forget`
+Delete a saved WiFi connection.
+
+**Request:** `{"name": "OldNetwork"}`
+
+#### `POST /api/network/hotspot/start`
+Start the WiFi hotspot. **Blocked with 400** if Ethernet or WiFi is currently active (single-interface policy).
+
+#### `POST /api/network/hotspot/stop`
+Stop the WiFi hotspot.
+
+#### `POST /api/network/apply-ip`
+Apply the saved static IP configuration to an active connection. Call this after saving settings with `/api/config/network`. The connection briefly drops (~1-2s) while re-activating.
+
+**Request:**
+```json
+{"interface": "ethernet"}
+```
+
+`interface` must be `"ethernet"` or `"wifi"`. Returns 500 if no active connection exists for that interface.
+
+**Example — set static IP via API:**
+```bash
+# 1. Save the config
+curl -X POST http://pi-decoder.local/api/config/network \
+  -H 'Content-Type: application/json' \
+  -d '{"eth_ip_mode":"manual","eth_ip_address":"192.168.1.100/24","eth_gateway":"192.168.1.1","eth_dns":"8.8.8.8"}'
+
+# 2. Apply it
+curl -X POST http://pi-decoder.local/api/network/apply-ip \
+  -H 'Content-Type: application/json' \
+  -d '{"interface":"ethernet"}'
+```
+
+#### `GET /api/network/speedtest`
+Get the last speed test result (or `null` if never run).
+
+**Response:** `{"ok": true, "result": {"download_mbps": 47.2, "latency_ms": 12.0, "timestamp": "2025-01-15T10:30:00", "wifi_band": "5 GHz", "avg_signal": 72, "interface_type": "USB adapter"}}`
+
+#### `POST /api/network/speedtest`
+Run a download speed test (~10s, downloads ~10 MB from Cloudflare). Returns 409 if already in progress.
+
+**Response:** `{"ok": true, "download_mbps": 47.2, "latency_ms": 12.0, "timestamp": "...", "wifi_band": "5 GHz", "avg_signal": 72, "interface_type": "USB adapter"}`
+
+### CEC TV Control
+
+All CEC endpoints control the TV over HDMI using the CEC protocol. Useful for automation with Bitfocus Companion, Home Assistant, etc.
+
+#### `POST /api/cec/on`
+Power on the TV.
+
+#### `POST /api/cec/standby`
+Put the TV in standby (off).
+
+#### `GET /api/cec/power-status`
+Get TV power status.
+
+**Response:** `{"ok": true, "status": "on"}` — status is `"on"`, `"standby"`, or `"unknown"`.
+
+#### `POST /api/cec/active-source`
+Switch the TV to the Pi's HDMI input.
+
+#### `POST /api/cec/input`
+Switch the TV to a specific HDMI port.
+
+**Request:** `{"port": 2}` — port 1-4.
+
+#### `POST /api/cec/volume-up`
+TV volume up.
+
+#### `POST /api/cec/volume-down`
+TV volume down.
+
+#### `POST /api/cec/mute`
+Toggle TV mute.
+
+### Video Controls
+
+#### `POST /api/stop/video`
+Stop video playback (shows idle screen).
+
+#### `POST /api/restart/video`
+Restart the video player process.
+
+#### `POST /api/restart/overlay`
+Restart the PCO overlay updater.
+
+#### `POST /api/restart/all`
+Restart both video player and overlay.
+
+### System
+
+#### `POST /api/update`
+Upload and install a software update package.
+
+**Request:** `multipart/form-data` with `file` field containing a `.whl` or `.tar.gz` file (max 10 MB). The service restarts automatically after install.
+
+**Response:** `{"ok": true, "version": "1.1.0", "message": "Updated to 1.1.0, restarting..."}`
+
+#### `POST /api/reboot`
+Reboot the Raspberry Pi (~90s downtime).
+
+#### `POST /api/shutdown`
+Shut down the Raspberry Pi. Requires physical access to power it back on.
 
 ### WebSocket Endpoints
 
 #### `WS /ws/status`
-Real-time status updates (JSON, every 2 seconds).
+Real-time status updates. Sends a JSON message every 2 seconds with the same shape as `GET /api/status` plus `hostname` and `cec.power` fields. The `network.hotspot_password` field is stripped from broadcasts.
 
 #### `WS /ws/preview`
-Live video preview frames (JPEG binary, every 2 seconds).
+Live video preview. Sends binary JPEG frames every 2 seconds.
 
 ---
 
@@ -325,6 +519,16 @@ Configuration file: `/etc/pi-decoder/config.toml`
 | `hotspot_password` | string | `"pidecodersetup"` | - | WiFi hotspot password |
 | `ethernet_timeout` | int | `10` | 1-120 | Seconds to wait for Ethernet before fallback |
 | `wifi_timeout` | int | `40` | 1-120 | Seconds to wait for WiFi before hotspot fallback |
+| `eth_ip_mode` | string | `"auto"` | `auto`, `manual` | Ethernet IP mode (DHCP or static) |
+| `eth_ip_address` | string | `""` | CIDR | Static IP for Ethernet (e.g. `192.168.1.100/24`) |
+| `eth_gateway` | string | `""` | IPv4 | Default gateway for Ethernet |
+| `eth_dns` | string | `""` | IPv4 CSV | DNS servers for Ethernet (comma-separated) |
+| `wifi_ip_mode` | string | `"auto"` | `auto`, `manual` | WiFi IP mode (DHCP or static) |
+| `wifi_ip_address` | string | `""` | CIDR | Static IP for WiFi (e.g. `10.0.0.50/24`) |
+| `wifi_gateway` | string | `""` | IPv4 | Default gateway for WiFi |
+| `wifi_dns` | string | `""` | IPv4 CSV | DNS servers for WiFi (comma-separated) |
+
+**Network behavior:** Only one connection is active at a time (Ethernet > WiFi > Hotspot). When Ethernet connects, WiFi is disconnected. When Ethernet drops, WiFi reconnects automatically. If all connections are lost for 30 seconds, the hotspot auto-starts. The hotspot cannot be started via API while Ethernet or WiFi is active.
 
 ### Example Configuration
 
@@ -364,6 +568,11 @@ hotspot_ssid = "Sanctuary-Setup"
 hotspot_password = "mypassword"
 ethernet_timeout = 10
 wifi_timeout = 40
+eth_ip_mode = "manual"
+eth_ip_address = "192.168.1.100/24"
+eth_gateway = "192.168.1.1"
+eth_dns = "8.8.8.8, 8.8.4.4"
+wifi_ip_mode = "auto"
 ```
 
 ---
@@ -480,24 +689,85 @@ och-pi-decoder/
 
 ## Bitfocus Companion Integration
 
-The pi-decoder exposes stream state via the `/api/status` endpoint, which can be polled by Bitfocus Companion to show stream health indicators.
+The pi-decoder REST API works with Companion's **Generic HTTP** module to provide custom variables on buttons and one-press actions for TV/stream control.
 
-### Key Status Fields
+### Module Setup
 
-| Field | Value | Meaning |
-|-------|-------|---------|
-| `mpv.idle` | `true` | No stream playing (encoder down) |
-| `mpv.idle` | `false` | Stream is active |
-| `mpv.playing` | `true` | Actively playing video |
-| `mpv.alive` | `true` | mpv process is running |
-| `mpv.alive` | `false` | mpv process crashed |
+1. In Companion, add a **Generic HTTP** connection
+2. Set the base URL to `http://<PI-IP>` (e.g. `http://192.168.1.100` or `http://pi-decoder.local`)
+3. Under the module's config, add **JSON poll requests** for the endpoints below
 
-### Example Companion Setup
+### Custom Variables (polling)
 
-1. Create HTTP GET request to `http://<PI-IP>/api/status`
-2. Poll every 2-5 seconds
-3. Parse JSON and check `mpv.idle` field
-4. Set button color: RED if idle, GREEN if playing
+Poll `GET /api/status` every 3-5 seconds. This single endpoint provides all the variables you need:
+
+| JSONPath | Example value | Use for |
+|----------|---------------|---------|
+| `$.mpv.playing` | `true` | Button color: green if playing, red if not |
+| `$.mpv.idle` | `false` | Stream down indicator |
+| `$.mpv.alive` | `true` | Process health indicator |
+| `$.mpv.stream_url` | `rtmp://...` | Display current stream URL |
+| `$.overlay.countdown` | `01:23:45` | Show countdown on a button |
+| `$.overlay.plan_title` | `Sunday Service` | Current service name |
+| `$.overlay.item_title` | `Worship` | Current item name |
+| `$.overlay.is_live` | `true` | PCO live indicator |
+| `$.network.connection_type` | `ethernet` | Network status on a button |
+| `$.network.ip` | `192.168.1.100` | Display current IP |
+| `$.network.signal` | `72` | WiFi signal strength |
+| `$.system.cpu_percent` | `12.5` | CPU usage |
+| `$.system.temperature` | `52.3` | Pi temperature |
+| `$.system.uptime` | `2d 5h` | Uptime display |
+| `$.name` | `Sanctuary` | Decoder name |
+
+For TV power status, poll `GET /api/cec/power-status` every 5-10 seconds:
+
+| JSONPath | Example value | Use for |
+|----------|---------------|---------|
+| `$.status` | `on` | Button color: green if on, yellow if standby |
+
+### Button Actions (HTTP POST)
+
+These don't return variables — they trigger actions when a button is pressed. Use Companion's **HTTP POST** action type with no request body needed (unless noted).
+
+| Button label | Method | URL | Body |
+|-------------|--------|-----|------|
+| TV On | POST | `/api/cec/on` | — |
+| TV Off | POST | `/api/cec/standby` | — |
+| Live Video (switch input) | POST | `/api/cec/active-source` | — |
+| HDMI 2 | POST | `/api/cec/input` | `{"port": 2}` |
+| Vol + | POST | `/api/cec/volume-up` | — |
+| Vol - | POST | `/api/cec/volume-down` | — |
+| Mute | POST | `/api/cec/mute` | — |
+| Play Stream | POST | `/api/restart/video` | — |
+| Stop Stream | POST | `/api/stop/video` | — |
+| Restart All | POST | `/api/restart/all` | — |
+| Reboot Pi | POST | `/api/reboot` | — |
+
+For actions with a JSON body, set the Content-Type header to `application/json`.
+
+### Example: Stream Status Button
+
+A button that shows "LIVE" in green when the stream is playing, or "DOWN" in red when idle:
+
+1. **Variable:** Poll `GET /api/status`, store `$.mpv.playing` as a variable
+2. **Button text:** `$(generic-http:mpv_playing)` or use a conditional: show "LIVE" / "DOWN"
+3. **Button color feedback:** Set green when `mpv_playing` equals `true`, red otherwise
+4. **Press action:** `POST /api/restart/video` to restart the stream
+
+### Example: Countdown Button
+
+A button that displays the PCO service countdown timer:
+
+1. **Variable:** Poll `GET /api/status`, store `$.overlay.countdown`
+2. **Button text:** `$(generic-http:overlay_countdown)`
+3. **Updates every poll interval** (3-5 seconds is fine for a countdown display)
+
+### Notes
+
+- **No WebSocket support needed** — HTTP polling at 3-5 second intervals works well for all use cases
+- **One poll endpoint is enough** — `GET /api/status` returns everything (video, overlay, network, system) in a single request
+- **All endpoints are unauthenticated** — no API keys or tokens needed, just the IP address
+- The pi-decoder must be on the same network as the Companion machine (or reachable via routing)
 
 ---
 

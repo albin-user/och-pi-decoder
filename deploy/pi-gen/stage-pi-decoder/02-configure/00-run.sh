@@ -42,6 +42,10 @@ if [ -f "${ROOTFS_DIR}/etc/xdg/autostart/piwiz.desktop" ]; then
        "${ROOTFS_DIR}/etc/xdg/autostart-disabled/" 2>/dev/null || true
 fi
 
+# Install single-interface policy dispatcher script
+install -m 755 "${STAGE_DIR}/02-configure/files/10-pi-decoder-single-iface" \
+    "${ROOTFS_DIR}/etc/NetworkManager/dispatcher.d/"
+
 # Install network fallback script and service
 install -d "${ROOTFS_DIR}/opt/pi-decoder/deploy"
 install -m 755 "${STAGE_DIR}/02-configure/files/pi-decoder-network.sh" \

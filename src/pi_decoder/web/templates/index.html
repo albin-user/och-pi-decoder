@@ -483,6 +483,77 @@
         </div>
 
         <div class="panel-card">
+          <h3 class="section-heading">IP Address Configuration</h3>
+          <div class="help" style="margin-bottom:16px">
+            Configure static IP addresses for Ethernet or WiFi. Hotspot always uses 10.42.0.x.
+            If a static IP causes issues, set your phone/laptop to the same IP range and connect directly.
+            The current IP is always shown on the TV screen.
+          </div>
+
+          <details class="advanced-section">
+            <summary>Ethernet IP</summary>
+            <div class="toggle-row mt-12" style="margin-bottom:12px">
+              <input type="checkbox" id="ethStaticIp" onchange="toggleStaticIp('eth')" {% if config.network.eth_ip_mode == 'manual' %}checked{% endif %}>
+              <label for="ethStaticIp" style="min-height:auto;padding:4px 0">Use static IP for Ethernet</label>
+            </div>
+            <div id="ethStaticFields" style="display:{% if config.network.eth_ip_mode == 'manual' %}block{% else %}none{% endif %}">
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="ethIpAddress">IP Address</label>
+                  <input type="text" id="ethIpAddress" value="{{ config.network.eth_ip_address.split('/')[0] if '/' in config.network.eth_ip_address else config.network.eth_ip_address }}" inputmode="decimal" placeholder="192.168.1.100">
+                </div>
+                <div class="form-group">
+                  <label for="ethSubnetMask">Subnet Mask</label>
+                  <input type="text" id="ethSubnetMask" value="{{ config.network.eth_ip_address | subnet_mask if '/' in config.network.eth_ip_address else '' }}" inputmode="decimal" placeholder="255.255.255.0">
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="ethGateway">Gateway</label>
+                  <input type="text" id="ethGateway" value="{{ config.network.eth_gateway }}" inputmode="decimal" placeholder="192.168.1.1">
+                </div>
+                <div class="form-group">
+                  <label for="ethDns">DNS Servers</label>
+                  <input type="text" id="ethDns" value="{{ config.network.eth_dns }}" inputmode="decimal" placeholder="Optional — uses gateway if empty">
+                </div>
+              </div>
+            </div>
+          </details>
+
+          <details class="advanced-section">
+            <summary>WiFi IP</summary>
+            <div class="toggle-row mt-12" style="margin-bottom:12px">
+              <input type="checkbox" id="wifiStaticIp" onchange="toggleStaticIp('wifi')" {% if config.network.wifi_ip_mode == 'manual' %}checked{% endif %}>
+              <label for="wifiStaticIp" style="min-height:auto;padding:4px 0">Use static IP for WiFi</label>
+            </div>
+            <div id="wifiStaticFields" style="display:{% if config.network.wifi_ip_mode == 'manual' %}block{% else %}none{% endif %}">
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="wifiIpAddress">IP Address</label>
+                  <input type="text" id="wifiIpAddress" value="{{ config.network.wifi_ip_address.split('/')[0] if '/' in config.network.wifi_ip_address else config.network.wifi_ip_address }}" inputmode="decimal" placeholder="192.168.1.101">
+                </div>
+                <div class="form-group">
+                  <label for="wifiSubnetMask">Subnet Mask</label>
+                  <input type="text" id="wifiSubnetMask" value="{{ config.network.wifi_ip_address | subnet_mask if '/' in config.network.wifi_ip_address else '' }}" inputmode="decimal" placeholder="255.255.255.0">
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="wifiGateway">Gateway</label>
+                  <input type="text" id="wifiGateway" value="{{ config.network.wifi_gateway }}" inputmode="decimal" placeholder="192.168.1.1">
+                </div>
+                <div class="form-group">
+                  <label for="wifiDns">DNS Servers</label>
+                  <input type="text" id="wifiDns" value="{{ config.network.wifi_dns }}" inputmode="decimal" placeholder="Optional — uses gateway if empty">
+                </div>
+              </div>
+            </div>
+          </details>
+
+          <button class="btn btn-primary mt-12" onclick="saveAndApplyStaticIp(this)">Save &amp; Apply IP Settings</button>
+        </div>
+
+        <div class="panel-card">
           <h3 class="section-heading">Hotspot Settings</h3>
 
           <div class="form-row">
@@ -632,7 +703,13 @@
             <dd>Access the pi-decoder at <code>http://pi-decoder.local</code> from any device on the same network. No IP address needed.</dd>
 
             <dt>Hotspot Fallback</dt>
-            <dd>If network is lost at boot, the pi-decoder falls back: Ethernet (10s) &rarr; saved WiFi (40s) &rarr; Hotspot. Timeouts are configurable in the Network tab.</dd>
+            <dd>If network is lost at boot, the pi-decoder falls back: Ethernet (10s) &rarr; saved WiFi (40s) &rarr; Hotspot. Timeouts are configurable in the Network tab. At runtime, if all connections are lost for 30 seconds, the hotspot auto-starts as a safety net.</dd>
+
+            <dt>Static IP</dt>
+            <dd>You can assign a fixed IP address for Ethernet and/or WiFi in the Network tab under "IP Address Configuration". Hotspot always uses 10.42.0.x. If a static IP causes lockout, set your phone/laptop to the same IP range (one IP apart) and connect directly. The current IP is always shown on the TV idle screen.</dd>
+
+            <dt>Single Interface Policy</dt>
+            <dd>Only one connection is active at a time: Ethernet &gt; WiFi &gt; Hotspot. When Ethernet connects, WiFi disconnects automatically (the radio stays on for scanning). When Ethernet drops, WiFi reconnects. The hotspot cannot be started while Ethernet or WiFi is active.</dd>
           </dl>
         </div>
 
