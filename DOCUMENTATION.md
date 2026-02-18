@@ -68,10 +68,14 @@ sudo raspi-config
 ```
 
 **In raspi-config menu:**
-- **1 System Options** → **S5 Boot / Auto Login** → **B2 Console Autologin**
+- **1 System Options** → **S6 Boot / Auto Login** → **B2 Console Autologin**
+  *Required.* mpv uses `--vo=drm` to render video directly to HDMI via DRM/KMS. This requires an active TTY session — without console autologin, no user is logged in after boot and mpv cannot acquire the display.
 - **3 Interface Options** → **P2 SSH** → **Yes** (if you want remote access)
+  *Optional.* Since Pi OS Lite has no desktop, SSH is your only way to manage the device remotely (config changes, logs, updates). Without it you'd need a physical keyboard.
 - **5 Localisation Options** → Set your timezone
+  *Recommended.* Ensures log timestamps (`journalctl`, mpv logs) match your wall clock, which matters when debugging stream outages or correlating events with your encoder.
 - **6 Advanced Options** → **A1 Expand Filesystem**
+  *Needed on first boot.* Pi OS images ship as ~4GB and don't always use the full SD card. Without expanding, you can run out of disk space for logs, the venv, apt packages, or temp files. Modern Bookworm usually auto-expands, but this is a safety net.
 - **Finish** → **Yes** to reboot
 
 ### Verify Network Connection
@@ -92,8 +96,11 @@ ping -c 3 your-encoder-ip
 
 ### Clone Repository
 ```bash
+# Install git (not included in Pi OS Lite)
+sudo apt install git -y
+
 # Clone the repository (or copy via USB/SCP)
-git clone <repository-url>
+git clone https://github.com/albin-user/och-pi-decoder.git
 cd och-pi-decoder
 ```
 
