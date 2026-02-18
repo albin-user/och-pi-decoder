@@ -118,6 +118,41 @@ class TestStreamConfig:
         assert config.stream.network_caching == 3000
 
 
+class TestStreamConfigHwdec:
+    def test_save_hwdec_valid(self, client, config):
+        resp = client.post("/api/config/stream", json={
+            "url": "rtmp://test.local/live",
+            "network_caching": 2000,
+            "hwdec": "v4l2m2m",
+        })
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+        assert config.stream.hwdec == "v4l2m2m"
+
+    def test_save_hwdec_invalid_rejected(self, client, config):
+        config.stream.hwdec = "auto"
+        resp = client.post("/api/config/stream", json={
+            "url": "rtmp://test.local/live",
+            "network_caching": 2000,
+            "hwdec": "cuda",
+        })
+        assert resp.status_code == 400
+        data = resp.json()
+        assert data["ok"] is False
+        assert "Invalid hwdec" in data["error"]
+        # Should not have changed
+        assert config.stream.hwdec == "auto"
+
+    def test_save_hwdec_omitted_keeps_existing(self, client, config):
+        config.stream.hwdec = "v4l2m2m"
+        resp = client.post("/api/config/stream", json={
+            "url": "rtmp://test.local/live",
+            "network_caching": 2000,
+        })
+        assert resp.status_code == 200
+        assert config.stream.hwdec == "v4l2m2m"
+
+
 class TestGeneralConfig:
     def test_save_name(self, client, config):
         with patch("pi_decoder.hostname.set_hostname", new_callable=AsyncMock, return_value="new-name"):

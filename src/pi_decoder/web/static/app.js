@@ -32,7 +32,7 @@
       "statNetwork", "networkCard", "statTv", "tvStatusCard",
       "netType", "netIp", "netSsid", "netSignal", "netStatusCard",
       "setupBanner", "setupChecklist",
-      "hostnameDisplay", "toastContainer",
+      "hostnameDisplay", "toastContainer", "hwdecCurrent",
     ];
     ids.forEach(function (id) { _el[id] = document.getElementById(id); });
   }
@@ -277,6 +277,11 @@
       }
     }
 
+    // hwdec current hint
+    if (_el.hwdecCurrent && d.mpv) {
+      _el.hwdecCurrent.textContent = d.mpv.hwdec_current || "--";
+    }
+
     // setup banner (shown above tabs, dismissible)
     if (_el.setupBanner) {
       _setupChecks = [];
@@ -481,6 +486,7 @@
   window.saveStreamConfig = function (btn) {
     var url = document.getElementById("streamUrl").value;
     var caching = parseInt(document.getElementById("networkCaching").value, 10);
+    var hwdec = document.getElementById("streamHwdec").value;
     // Client-side validation
     if (url && !/^(rtmps?|srt|https?|rtp|udp):\/\//i.test(url)) {
       toast("Stream URL must start with rtmp://, srt://, http://, https://, etc.", "error");
@@ -490,7 +496,7 @@
       toast("Buffer delay must be between 200 and 30000 ms", "error");
       return;
     }
-    withLoading(btn, apiPost("/api/config/stream", { url: url, network_caching: caching }).then(
+    withLoading(btn, apiPost("/api/config/stream", { url: url, network_caching: caching, hwdec: hwdec }).then(
       function (d) {
         if (d.ok) {
           toast("Stream config saved");

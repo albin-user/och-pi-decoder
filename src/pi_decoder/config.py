@@ -30,6 +30,7 @@ DEFAULT_CONFIG_PATH = Path("/etc/pi-decoder/config.toml")
 class StreamConfig:
     url: str = ""
     network_caching: int = 2000
+    hwdec: str = "auto"
 
 
 @dataclass

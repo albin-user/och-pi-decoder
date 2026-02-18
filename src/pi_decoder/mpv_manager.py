@@ -92,20 +92,20 @@ class MpvManager:
             "--vo=drm",
             *(["--drm-device=" + drm_dev] if drm_dev else []),
             "--no-terminal",
-            "--hwdec=auto",
+            f"--hwdec={self._config.stream.hwdec}",
+            "--keepaspect=yes",
             f"--input-ipc-server={IPC_SOCKET}",
             "--idle=yes",
             "--cache=yes",
-            "--demuxer-max-bytes=5M",
-            "--demuxer-readahead-secs=5",
+            "--demuxer-max-bytes=50M",
+            "--demuxer-readahead-secs=30",
             "--no-osc",
             "--no-osd-bar",
             "--osd-level=0",
             "--audio-device=auto",
-            "--ytdl-format=bestvideo[height<=1080]+bestaudio/best[height<=1080]",
+            "--ytdl-format=best[height<=1080]",
             "--stream-lavf-o=reconnect=1,reconnect_streamed=1,reconnect_delay_max=5",
-            "--background=color",
-            "--background-color=0/0/0",  # Pure black when idle
+            "--background=0/0/0",  # Pure black when idle
             "--osd-msg1=",  # No OSD messages
         ]
 
@@ -206,6 +206,12 @@ class MpvManager:
             result["playing"] = False
             result["idle"] = True
             result["stream_url"] = ""
+        # hwdec-current: what decoder mpv actually resolved to
+        try:
+            hwdec_cur = await self._get_property("hwdec-current")
+            result["hwdec_current"] = hwdec_cur or ""
+        except Exception:
+            result["hwdec_current"] = ""
         return result
 
     async def set_overlay(self, overlay_id: int, ass_text: str) -> None:

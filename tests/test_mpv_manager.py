@@ -273,6 +273,7 @@ class TestGetStatus:
             False,   # pause
             False,   # idle-active
             "http://example.com/stream.m3u8",  # path
+            "v4l2m2m",  # hwdec-current
         ])
         status = await mgr.get_status()
         assert status["alive"] is True
@@ -280,6 +281,7 @@ class TestGetStatus:
         assert status["idle"] is False
         assert status["playing"] is True
         assert status["stream_url"] == "http://example.com/stream.m3u8"
+        assert status["hwdec_current"] == "v4l2m2m"
 
     async def test_status_when_paused(self):
         mgr = _make_manager()
@@ -288,6 +290,7 @@ class TestGetStatus:
             True,    # pause
             False,   # idle-active
             "http://example.com/stream.m3u8",  # path
+            "",      # hwdec-current
         ])
         status = await mgr.get_status()
         assert status["paused"] is True
@@ -300,11 +303,13 @@ class TestGetStatus:
             False,   # pause
             True,    # idle-active
             None,    # path
+            None,    # hwdec-current
         ])
         status = await mgr.get_status()
         assert status["idle"] is True
         assert status["playing"] is False
         assert status["stream_url"] == ""
+        assert status["hwdec_current"] == ""
 
     async def test_status_on_ipc_error(self):
         mgr = _make_manager()
@@ -315,6 +320,7 @@ class TestGetStatus:
         assert status["playing"] is False
         assert status["idle"] is True
         assert status["stream_url"] == ""
+        assert status["hwdec_current"] == ""
 
     async def test_status_no_process(self):
         mgr = _make_manager()
@@ -593,6 +599,47 @@ class TestStart:
         call_args = mock_exec.call_args[0]
         # No empty string or stream URL should appear
         assert "" not in call_args[1:]  # skip 'mpv' itself
+
+    @patch("pi_decoder.mpv_manager.Path")
+    @patch("asyncio.create_subprocess_exec", new_callable=AsyncMock)
+    @patch("asyncio.sleep", new_callable=AsyncMock)
+    async def test_start_uses_hwdec_from_config(
+        self, mock_sleep, mock_exec, mock_path_cls
+    ):
+        cfg = _make_config(**{"stream.hwdec": "v4l2m2m"})
+        mgr = MpvManager(cfg)
+        mock_proc = MagicMock()
+        mock_proc.returncode = None
+        mock_exec.return_value = mock_proc
+        mgr._connect_ipc = AsyncMock()
+        mock_path_cls.return_value.exists.return_value = True
+
+        with patch("asyncio.create_task") as mock_task:
+            mock_task.return_value = MagicMock(done=MagicMock(return_value=False))
+            await mgr.start()
+
+        call_args = mock_exec.call_args[0]
+        assert "--hwdec=v4l2m2m" in call_args
+
+    @patch("pi_decoder.mpv_manager.Path")
+    @patch("asyncio.create_subprocess_exec", new_callable=AsyncMock)
+    @patch("asyncio.sleep", new_callable=AsyncMock)
+    async def test_start_defaults_to_hwdec_auto(
+        self, mock_sleep, mock_exec, mock_path_cls
+    ):
+        mgr = _make_manager()
+        mock_proc = MagicMock()
+        mock_proc.returncode = None
+        mock_exec.return_value = mock_proc
+        mgr._connect_ipc = AsyncMock()
+        mock_path_cls.return_value.exists.return_value = True
+
+        with patch("asyncio.create_task") as mock_task:
+            mock_task.return_value = MagicMock(done=MagicMock(return_value=False))
+            await mgr.start()
+
+        call_args = mock_exec.call_args[0]
+        assert "--hwdec=auto" in call_args
 
     @patch("os.unlink")
     @patch("pi_decoder.mpv_manager.Path")

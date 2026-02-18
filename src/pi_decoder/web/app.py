@@ -224,11 +224,19 @@ def create_app(
         hostname = await set_hostname(config.general.name)
         return {"ok": True, "hostname": hostname}
 
+    ALLOWED_HWDEC = {"auto", "auto-safe", "v4l2m2m", "no"}
+
     @app.post("/api/config/stream")
     async def api_config_stream(request: Request):
         data = await request.json()
         config.stream.url = data.get("url", config.stream.url)
         config.stream.network_caching = int(data.get("network_caching", config.stream.network_caching))
+        if "hwdec" in data:
+            hwdec = str(data["hwdec"]).strip()
+            if hwdec in ALLOWED_HWDEC:
+                config.stream.hwdec = hwdec
+            else:
+                return JSONResponse({"ok": False, "error": f"Invalid hwdec value: {hwdec}"}, 400)
         validate_config(config)
         save_config(config, config_path)
         log.info("Config updated: stream URL changed to %s", config.stream.url[:50])
@@ -439,12 +447,12 @@ def create_app(
 
     @app.post("/api/reboot")
     async def api_reboot():
-        subprocess.Popen(["sudo", "reboot"])
+        subprocess.Popen(["sudo", "/sbin/reboot"])
         return {"ok": True, "message": "System rebooting"}
 
     @app.post("/api/shutdown")
     async def api_shutdown():
-        subprocess.Popen(["sudo", "poweroff"])
+        subprocess.Popen(["sudo", "/sbin/poweroff"])
         return {"ok": True, "message": "System shutting down"}
 
     # ── Config backup/restore ─────────────────────────────────────
