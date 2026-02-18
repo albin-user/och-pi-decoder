@@ -8,12 +8,12 @@ Type=simple
 User=pi
 Group=pi
 SupplementaryGroups=video render
-# Switch to VT2 so mpv can acquire DRM master for HDMI output
-ExecStartPre=-/usr/bin/chvt 2
+# Allocate VT7 (unused) so mpv can acquire DRM master for HDMI output
+ExecStartPre=+/usr/bin/chvt 7
 ExecStart=/opt/pi-decoder/venv/bin/python -m pi_decoder
 WorkingDirectory=/opt/pi-decoder
-TTYPath=/dev/tty2
-StandardInput=tty-force
+TTYPath=/dev/tty7
+StandardInput=tty
 StandardOutput=journal
 StandardError=journal
 Restart=always
