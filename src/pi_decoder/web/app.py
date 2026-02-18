@@ -306,7 +306,7 @@ def create_app(
     @app.get("/api/service-types")
     async def api_service_types():
         if not pco:
-            return JSONResponse({"ok": False, "error": "PCO not configured"}, 400)
+            return {"service_types": []}
         types = await pco.get_service_types()
         return {"service_types": types}
 

@@ -8,14 +8,10 @@ Type=simple
 User=pi
 Group=pi
 SupplementaryGroups=video render
-# Allocate VT7 (unused) so mpv can acquire DRM master for HDMI output
+# Switch to empty VT so no getty holds DRM master (mpv needs it for HDMI)
 ExecStartPre=+/usr/bin/chvt 7
 ExecStart=/opt/pi-decoder/venv/bin/python -m pi_decoder
 WorkingDirectory=/opt/pi-decoder
-TTYPath=/dev/tty7
-StandardInput=tty
-StandardOutput=journal
-StandardError=journal
 Restart=always
 RestartSec=3
 # Restart quickly on failure for seamless recovery

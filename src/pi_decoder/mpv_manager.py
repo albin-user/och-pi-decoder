@@ -72,6 +72,7 @@ class MpvManager:
         self._stream_retry_backoff = 5.0  # Start at 5 seconds
         self._last_stream_attempt = 0.0
         self._last_connection_type = ""  # Track for auto-retry on network change
+        self._stderr_task: asyncio.Task | None = None
 
     # ── lifecycle ────────────────────────────────────────────────────────
 
@@ -115,8 +116,11 @@ class MpvManager:
         self._process = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
         )
+
+        # Drain stderr in background so the pipe buffer never fills (mpv would block)
+        self._stderr_task = asyncio.create_task(self._read_stderr())
 
         # wait for IPC socket to appear
         for _ in range(50):  # up to 5 s
@@ -159,6 +163,13 @@ class MpvManager:
             except asyncio.TimeoutError:
                 self._process.kill()
                 await self._process.wait()
+
+        if self._stderr_task and not self._stderr_task.done():
+            self._stderr_task.cancel()
+            try:
+                await self._stderr_task
+            except asyncio.CancelledError:
+                pass
 
         self._process = None
         log.info("mpv stopped")
@@ -304,6 +315,19 @@ class MpvManager:
             lines.append(f"{accent}  Password: {hs_pass}")
 
         return "\\N".join(lines)
+
+    async def _read_stderr(self) -> None:
+        """Continuously drain mpv stderr and log warnings."""
+        try:
+            while self._process and self._process.stderr:
+                line = await self._process.stderr.readline()
+                if not line:
+                    break
+                msg = line.decode(errors="replace").rstrip()
+                if msg:
+                    log.warning("mpv: %s", msg)
+        except Exception:
+            pass
 
     # ── IPC internals ────────────────────────────────────────────────────
 

@@ -554,8 +554,8 @@ class TestServiceTypes:
         app = create_app(mock_mpv, None, mock_overlay, config, config_path)
         c = TestClient(app)
         resp = c.get("/api/service-types")
-        assert resp.status_code == 400
-        assert resp.json()["ok"] is False
+        assert resp.status_code == 200
+        assert resp.json()["service_types"] == []
 
 
 class TestHotspotGuard:
