@@ -495,8 +495,6 @@ def create_app(
             if "secret" not in pco_data:
                 pco_data["secret"] = config.pco.secret
             _apply_dict(config.pco, pco_data)
-        if "display" in raw:
-            _apply_dict(config.display, raw["display"])
         if "web" in raw:
             _apply_dict(config.web, raw["web"])
         if "network" in raw:

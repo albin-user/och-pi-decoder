@@ -46,6 +46,9 @@ pi-decoder = "pi_decoder.main:run"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+pi_decoder = ["web/templates/*.html", "web/static/*.css", "web/static/*.js"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"

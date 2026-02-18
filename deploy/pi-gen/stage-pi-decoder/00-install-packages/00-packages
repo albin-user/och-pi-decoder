@@ -3,3 +3,4 @@ python3-pip
 unattended-upgrades
 cec-utils
 avahi-daemon
+yt-dlp
