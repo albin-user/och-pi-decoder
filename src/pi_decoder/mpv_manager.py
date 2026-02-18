@@ -20,6 +20,16 @@ SCREENSHOT_PATH = "/tmp/mpv-preview.jpg"
 IP_OVERLAY_ID = 63
 
 
+def _find_drm_device() -> str | None:
+    """Find the DRM card that has HDMI connectors (Pi 5 uses card1, Pi 4 uses card0)."""
+    import glob as _glob
+    connectors = sorted(_glob.glob("/sys/class/drm/card*-HDMI-*"))
+    if connectors:
+        card = os.path.basename(connectors[0]).split("-")[0]
+        return f"/dev/dri/{card}"
+    return None
+
+
 def _get_version() -> str:
     try:
         return pkg_version("pi-decoder")
@@ -74,9 +84,12 @@ class MpvManager:
         except FileNotFoundError:
             pass
 
+        drm_dev = _find_drm_device()
+
         cmd = [
             "mpv",
             "--vo=drm",
+            *(["--drm-device=" + drm_dev] if drm_dev else []),
             "--no-terminal",
             "--hwdec=auto",
             f"--input-ipc-server={IPC_SOCKET}",

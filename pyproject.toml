@@ -27,6 +27,7 @@ dependencies = [
     "python-dateutil>=2.8",
     "tomli-w>=1.0",
     "yt-dlp>=2025.1",
+    "python-multipart>=0.0.6",
 ]
 
 [project.urls]
@@ -37,7 +38,6 @@ Repository = "https://github.com/albin-user/och-pi-decoder.git"
 dev = [
     "pytest>=7.4",
     "pytest-asyncio>=0.21",
-    "python-multipart>=0.0.6",
 ]
 
 [project.scripts]
