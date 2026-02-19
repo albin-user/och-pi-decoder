@@ -785,65 +785,13 @@
     }
   };
 
-  // ── system / OTA update ────────────────────────────────────────────
+  // ── system ────────────────────────────────────────────────────────
 
   function loadVersion() {
     apiGet("/api/version").then(function (d) {
       setText("currentVersion", d.version || "unknown");
     });
   }
-
-  window.uploadUpdate = function () {
-    var fileInput = document.getElementById("updateFile");
-    var statusEl = document.getElementById("updateStatus");
-    if (!fileInput.files || !fileInput.files.length) {
-      toast("Select a file first", "error");
-      return;
-    }
-    var file = fileInput.files[0];
-    var name = file.name || "";
-    if (!name.endsWith(".whl") && !name.endsWith(".tar.gz")) {
-      toast("Only .whl or .tar.gz files", "error");
-      return;
-    }
-    showConfirm("Install update? The service will restart and video will briefly stop.").then(function (ok) {
-      if (!ok) return;
-
-      statusEl.style.display = "block";
-      statusEl.innerHTML = "<p>Uploading...</p>";
-
-      var formData = new FormData();
-      formData.append("file", file);
-
-      fetch("/api/update", {
-        method: "POST",
-        body: formData,
-      })
-        .then(function (r) { return r.json(); })
-        .then(function (d) {
-          if (d.ok) {
-            statusEl.innerHTML = '<p class="ok">Installed version ' + escapeHtml(d.version) + '</p>' +
-              '<p>Service restarting in <span id="restartCountdown">3</span>...</p>';
-            var count = 3;
-            var iv = setInterval(function () {
-              count--;
-              var el = document.getElementById("restartCountdown");
-              if (el) el.textContent = count;
-              if (count <= 0) {
-                clearInterval(iv);
-                statusEl.innerHTML += "<p>Reconnecting...</p>";
-                setTimeout(function () { location.reload(); }, 5000);
-              }
-            }, 1000);
-          } else {
-            statusEl.innerHTML = '<p class="err">Error: ' + escapeHtml(d.error || "Unknown") + '</p>';
-          }
-        })
-        .catch(function (err) {
-          statusEl.innerHTML = '<p class="err">Upload failed: ' + escapeHtml(err.message) + '</p>';
-        });
-    });
-  };
 
   // ── config import ──────────────────────────────────────────────────
 

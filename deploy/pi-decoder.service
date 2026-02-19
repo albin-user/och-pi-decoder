@@ -1,6 +1,6 @@
 [Unit]
 Description=Pi-Decoder
-After=network-online.target
+After=network-online.target pi-decoder-network.service
 Wants=network-online.target
 
 [Service]

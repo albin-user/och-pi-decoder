@@ -8,14 +8,29 @@ set -e
 
 CONFIG="/etc/pi-decoder/config.toml"
 
+# Section-aware TOML reader: only matches keys within the given [section].
+# Usage: toml_get <file> <section> <key>
+toml_get() {
+    awk -v section="$2" -v key="$3" '
+        /^\[/ { in_section = ($0 == "[" section "]") }
+        in_section && $0 ~ "^" key "[[:space:]]*=" {
+            sub(/^[^=]*=[[:space:]]*/, "")
+            gsub(/^"|"$/, "")     # strip surrounding quotes
+            gsub(/[[:space:]]*#.*$/, "")  # strip inline comments
+            print
+            exit
+        }
+    ' "$1" 2>/dev/null
+}
+
 # Read timeouts from config (defaults: 10s ethernet, 40s WiFi)
 ETH_TIMEOUT=10
 WIFI_TIMEOUT=40
 
 if [ -f "$CONFIG" ]; then
-    val=$(awk -F'=' '/^ethernet_timeout[[:space:]]*=/ {gsub(/[[:space:]]/, "", $2); print $2}' "$CONFIG" 2>/dev/null || true)
+    val=$(toml_get "$CONFIG" network ethernet_timeout)
     [ -n "$val" ] && ETH_TIMEOUT="$val"
-    val=$(awk -F'=' '/^wifi_timeout[[:space:]]*=/ {gsub(/[[:space:]]/, "", $2); print $2}' "$CONFIG" 2>/dev/null || true)
+    val=$(toml_get "$CONFIG" network wifi_timeout)
     [ -n "$val" ] && WIFI_TIMEOUT="$val"
 fi
 
@@ -24,9 +39,9 @@ HOTSPOT_SSID="Pi-Decoder"
 HOTSPOT_PASS="pidecodersetup"
 
 if [ -f "$CONFIG" ]; then
-    val=$(awk -F'"' '/^hotspot_ssid[[:space:]]*=/ {print $2}' "$CONFIG" 2>/dev/null || true)
+    val=$(toml_get "$CONFIG" network hotspot_ssid)
     [ -n "$val" ] && HOTSPOT_SSID="$val"
-    val=$(awk -F'"' '/^hotspot_password[[:space:]]*=/ {print $2}' "$CONFIG" 2>/dev/null || true)
+    val=$(toml_get "$CONFIG" network hotspot_password)
     [ -n "$val" ] && HOTSPOT_PASS="$val"
 fi
 

@@ -251,15 +251,19 @@ class TestOverlayCommands:
         mgr = _make_manager()
         mgr._send = AsyncMock()
         await mgr.set_overlay(42, r"{\an7\fs22}Hello")
-        mgr._send.assert_awaited_once_with([
-            "osd-overlay", 42, "ass-events", r"{\an7\fs22}Hello",
-        ])
+        mgr._send.assert_awaited_once_with(
+            ["osd-overlay"],
+            id=42, format="ass-events", data=r"{\an7\fs22}Hello",
+            res_x=1920, res_y=1080,
+        )
 
     async def test_remove_overlay(self):
         mgr = _make_manager()
         mgr._send = AsyncMock()
         await mgr.remove_overlay(63)
-        mgr._send.assert_awaited_once_with(["osd-overlay", 63, "none", ""])
+        mgr._send.assert_awaited_once_with(
+            ["osd-overlay"], id=63, format="none", data="",
+        )
 
 
 # ── get_status ───────────────────────────────────────────────────────────────

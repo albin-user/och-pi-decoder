@@ -87,6 +87,15 @@ class MpvManager:
 
         drm_dev = _find_drm_device()
 
+        # Point mpv's ytdl_hook at the venv yt-dlp so it uses the
+        # up-to-date version instead of the old apt system binary.
+        venv_ytdl = "/opt/pi-decoder/venv/bin/yt-dlp"
+        ytdl_path_opt = (
+            [f"--script-opts=ytdl_hook-ytdl_path={venv_ytdl}"]
+            if Path(venv_ytdl).exists()
+            else []
+        )
+
         cmd = [
             "mpv",
             "--vo=drm",
@@ -98,7 +107,7 @@ class MpvManager:
             "--idle=yes",
             "--cache=yes",
             "--demuxer-max-bytes=50M",
-            "--demuxer-readahead-secs=30",
+            f"--demuxer-readahead-secs={self._config.stream.network_caching // 1000}",
             "--no-osc",
             "--no-osd-bar",
             "--osd-level=0",
@@ -107,6 +116,7 @@ class MpvManager:
             "--stream-lavf-o=reconnect=1,reconnect_streamed=1,reconnect_delay_max=5",
             "--background=0/0/0",  # Pure black when idle
             "--osd-msg1=",  # No OSD messages
+            *ytdl_path_opt,
         ]
 
         if self._config.stream.url:
@@ -215,16 +225,15 @@ class MpvManager:
         return result
 
     async def set_overlay(self, overlay_id: int, ass_text: str) -> None:
-        """Push an ASS overlay using osd-overlay command."""
-        await self._send([
-            "osd-overlay",
-            overlay_id,
-            "ass-events",
-            ass_text,
-        ])
+        """Push an ASS overlay using osd-overlay with explicit resolution."""
+        await self._send(
+            ["osd-overlay"],
+            id=overlay_id, format="ass-events", data=ass_text,
+            res_x=1920, res_y=1080,
+        )
 
     async def remove_overlay(self, overlay_id: int) -> None:
-        await self._send(["osd-overlay", overlay_id, "none", ""])
+        await self._send(["osd-overlay"], id=overlay_id, format="none", data="")
 
     async def take_screenshot(self) -> bytes | None:
         """Capture a screenshot, return JPEG bytes."""
@@ -398,13 +407,17 @@ class MpvManager:
         except Exception:
             log.debug("IPC reader ended", exc_info=True)
 
-    async def _send(self, command: list, timeout: float = 5.0):
-        """Send a JSON command and wait for the response."""
+    async def _send(self, command: list, timeout: float = 5.0, **named_args):
+        """Send a JSON command and wait for the response.
+
+        Extra keyword arguments are merged into the top-level message as
+        named parameters (used by commands like ``osd-overlay``).
+        """
         if not self._writer:
             raise RuntimeError("IPC not connected")
         self._request_id += 1
         rid = self._request_id
-        msg = {"command": command, "request_id": rid}
+        msg = {"command": command, "request_id": rid, **named_args}
         payload = json.dumps(msg) + "\n"
         fut: asyncio.Future = asyncio.get_running_loop().create_future()
         self._pending[rid] = fut

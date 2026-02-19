@@ -26,8 +26,6 @@ from pi_decoder.mpv_manager import MpvManager
 from pi_decoder.overlay import OverlayUpdater, format_overlay, format_countdown
 from pi_decoder.pco_client import PCOClient
 
-MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
-
 log = logging.getLogger(__name__)
 
 _WEB_DIR = Path(__file__).parent
@@ -382,68 +380,6 @@ def create_app(
         except Exception:
             ver = "unknown"
         return {"version": ver}
-
-    @app.post("/api/update")
-    async def api_update(file: UploadFile = File(...)):
-        filename = file.filename or ""
-        if not (filename.endswith(".whl") or filename.endswith(".tar.gz")):
-            return JSONResponse(
-                {"ok": False, "error": "Only .whl or .tar.gz files accepted"},
-                status_code=400,
-            )
-
-        # Read and check size
-        content = await file.read()
-        if len(content) > MAX_UPLOAD_SIZE:
-            return JSONResponse(
-                {"ok": False, "error": "File too large (max 10MB)"},
-                status_code=400,
-            )
-
-        # Save to temp file (secure)
-        import tempfile
-        suffix = ".whl" if filename.endswith(".whl") else ".tar.gz"
-        fd, tmp_name = tempfile.mkstemp(suffix=suffix, prefix="pi-decoder-update-")
-        tmp_path = Path(tmp_name)
-        try:
-            tmp_path.write_bytes(content)
-            os.close(fd)
-
-            # Install with venv pip (no --break-system-packages needed)
-            venv_pip = Path("/opt/pi-decoder/venv/bin/pip")
-            pip_cmd = [str(venv_pip), "install", str(tmp_path)] if venv_pip.exists() else \
-                      [sys.executable, "-m", "pip", "install", "--break-system-packages", str(tmp_path)]
-            result = subprocess.run(
-                pip_cmd,
-                capture_output=True, text=True, timeout=120,
-            )
-            if result.returncode != 0:
-                return JSONResponse(
-                    {"ok": False, "error": result.stderr or result.stdout},
-                    status_code=500,
-                )
-        except subprocess.TimeoutExpired:
-            return JSONResponse(
-                {"ok": False, "error": "Install timed out"},
-                status_code=500,
-            )
-        finally:
-            tmp_path.unlink(missing_ok=True)
-
-        # Read new version
-        try:
-            new_ver = pkg_version("pi-decoder")
-        except Exception:
-            new_ver = "unknown"
-
-        # Schedule service restart after 2s so response reaches client
-        async def _restart_service():
-            await asyncio.sleep(2)
-            subprocess.Popen(["sudo", "systemctl", "restart", "pi-decoder"])
-
-        asyncio.create_task(_restart_service())
-
-        return {"ok": True, "version": new_ver, "message": f"Updated to {new_ver}, restarting..."}
 
     @app.post("/api/reboot")
     async def api_reboot():

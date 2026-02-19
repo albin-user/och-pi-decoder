@@ -27,8 +27,6 @@ poll_interval = 5            # seconds between PCO API calls
 
 [web]
 port = 80
-password_hash = ""           # scrypt hash — set via web UI, leave empty to disable auth
-session_secret = ""          # auto-generated on first run if empty
 
 [network]
 hotspot_ssid = "Pi-Decoder"

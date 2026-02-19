@@ -387,43 +387,6 @@ class TestConfigImport:
         mock_validate.assert_called_once_with(config)
 
 
-class TestSoftwareUpdate:
-    def test_update_wrong_file_type(self, client):
-        resp = client.post(
-            "/api/update",
-            files={"file": ("package.zip", b"fake", "application/zip")},
-        )
-        assert resp.status_code == 400
-        data = resp.json()
-        assert data["ok"] is False
-        assert ".whl" in data["error"] or ".tar.gz" in data["error"]
-
-    def test_update_oversized_file(self, client):
-        big_content = b"\x00" * (11 * 1024 * 1024)  # 11 MB, over the 10 MB limit
-        resp = client.post(
-            "/api/update",
-            files={"file": ("pkg.whl", big_content, "application/octet-stream")},
-        )
-        assert resp.status_code == 400
-        data = resp.json()
-        assert data["ok"] is False
-        assert "too large" in data["error"]
-
-    @patch("subprocess.Popen")
-    @patch("subprocess.run")
-    def test_update_successful_install(self, mock_run, _mock_popen, client):
-        mock_run.return_value = MagicMock(returncode=0, stdout="Successfully installed", stderr="")
-        resp = client.post(
-            "/api/update",
-            files={"file": ("pi_decoder-1.2.3.whl", b"fake-wheel-data", "application/octet-stream")},
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["ok"] is True
-        assert "version" in data
-        assert "message" in data
-
-
 class TestRestartEndpoints:
     def test_restart_video(self, client, mock_mpv):
         resp = client.post("/api/restart/video")

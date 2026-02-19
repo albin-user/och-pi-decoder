@@ -205,6 +205,7 @@
             </select>
             <div class="help">Currently using: <span id="hwdecCurrent">--</span></div>
             <div class="help">If playback fails, switch back to Auto</div>
+            <div class="help">Pi 5: V4L2 only supports HEVC (H.265). Most streams are H.264 — use Auto instead.</div>
           </div>
         </details>
 
@@ -621,17 +622,6 @@
           <div class="label">Installed Version</div>
           <div class="value" id="currentVersion">Loading...</div>
         </div>
-
-        <h3 class="section-heading">Software Update</h3>
-
-        <div class="form-group">
-          <label for="updateFile">Upload Package (.whl or .tar.gz)</label>
-          <input type="file" id="updateFile" accept=".whl,.tar.gz">
-        </div>
-
-        <button class="btn btn-primary" onclick="uploadUpdate()">Upload &amp; Install</button>
-
-        <div id="updateStatus" class="test-results" style="display:none; margin-top:12px"></div>
 
         <h3 class="section-heading">Service Logs</h3>
 

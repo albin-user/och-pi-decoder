@@ -57,6 +57,12 @@ class TestRunCec:
 
 class TestPowerCommands:
 
+    def setup_method(self):
+        """Reset CEC power cache between tests."""
+        cec._power_cache = "unknown"
+        cec._power_cache_time = 0.0
+        cec._power_lock = None
+
     @pytest.mark.asyncio
     async def test_power_on(self):
         with patch("pi_decoder.cec._run_cec", new_callable=AsyncMock, return_value="power on sent"):
@@ -89,6 +95,16 @@ class TestPowerCommands:
                     return_value="some garbage output\n"):
             result = await cec.get_power_status()
         assert result == "unknown"
+
+    @pytest.mark.asyncio
+    async def test_get_power_status_uses_cache(self):
+        """Second call within TTL returns cached value without spawning cec-client."""
+        mock = AsyncMock(return_value="power status: on\n")
+        with patch("pi_decoder.cec._run_cec", mock):
+            result1 = await cec.get_power_status()
+            result2 = await cec.get_power_status()
+        assert result1 == result2 == "on"
+        mock.assert_called_once()  # Only one subprocess spawned
 
 
 class TestSourceCommands:

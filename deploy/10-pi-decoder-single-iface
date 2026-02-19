@@ -6,13 +6,27 @@ IFACE=$1
 ACTION=$2
 CONFIG="/etc/pi-decoder/config.toml"
 
+# Section-aware TOML reader: only matches keys within the given [section].
+toml_get() {
+    awk -v section="$2" -v key="$3" '
+        /^\[/ { in_section = ($0 == "[" section "]") }
+        in_section && $0 ~ "^" key "[[:space:]]*=" {
+            sub(/^[^=]*=[[:space:]]*/, "")
+            gsub(/^"|"$/, "")
+            gsub(/[[:space:]]*#.*$/, "")
+            print
+            exit
+        }
+    ' "$1" 2>/dev/null
+}
+
 # Read hotspot config
 SSID="Pi-Decoder"
 PASS="pidecodersetup"
 if [ -f "$CONFIG" ]; then
-    val=$(awk -F'"' '/^hotspot_ssid\s*=/ {print $2}' "$CONFIG" 2>/dev/null || true)
+    val=$(toml_get "$CONFIG" network hotspot_ssid)
     [ -n "$val" ] && SSID="$val"
-    val=$(awk -F'"' '/^hotspot_password\s*=/ {print $2}' "$CONFIG" 2>/dev/null || true)
+    val=$(toml_get "$CONFIG" network hotspot_password)
     [ -n "$val" ] && PASS="$val"
 fi
 
@@ -35,7 +49,9 @@ if [[ "$IFACE" == eth* ]]; then
     esac
 fi
 
-# Runtime hotspot fallback: if ALL connections lost, wait 30s then start hotspot
+# Runtime hotspot fallback: if ALL connections lost, wait 30s then start hotspot.
+# Uses flock to prevent concurrent hotspot creation when multiple interfaces
+# go down in quick succession.
 if [ "$ACTION" = "down" ]; then
     (
         for i in $(seq 1 10); do
@@ -44,9 +60,11 @@ if [ "$ACTION" = "down" ]; then
                 exit 0  # Connection restored, abort
             fi
         done
-        # Still disconnected after 30s — start hotspot
-        nmcli connection delete Hotspot 2>/dev/null || true
-        nmcli device wifi hotspot ifname wlan0 ssid "$SSID" password "$PASS" 2>/dev/null || true
-        nmcli connection modify Hotspot ipv4.dns 10.42.0.1 2>/dev/null || true
+        # Still disconnected after 30s — start hotspot (serialised via flock)
+        flock -n /tmp/pi-decoder-hotspot.lock -c "
+            nmcli connection delete Hotspot 2>/dev/null || true
+            nmcli device wifi hotspot ifname wlan0 ssid '$SSID' password '$PASS' 2>/dev/null || true
+            nmcli connection modify Hotspot ipv4.dns 10.42.0.1 2>/dev/null || true
+        " || true
     ) &
 fi
