@@ -112,7 +112,7 @@ class MpvManager:
             "--no-osd-bar",
             "--osd-level=0",
             "--audio-device=auto",
-            "--ytdl-format=best[height<=1080]",
+            "--ytdl-format=bestvideo[height<=1080]+bestaudio/best[height<=1080]",
             "--stream-lavf-o=reconnect=1,reconnect_streamed=1,reconnect_delay_max=5",
             "--background=0/0/0",  # Pure black when idle
             "--osd-msg1=",  # No OSD messages
