@@ -222,6 +222,19 @@ class MpvManager:
             result["hwdec_current"] = hwdec_cur or ""
         except Exception:
             result["hwdec_current"] = ""
+        # Video performance stats (only meaningful while playing)
+        try:
+            result["fps"] = await self._get_property("estimated-vf-fps") or 0
+            result["dropped_frames"] = await self._get_property("frame-drop-count") or 0
+            result["decoder_drops"] = await self._get_property("decoder-frame-drop-count") or 0
+            w = await self._get_property("video-params/w")
+            h = await self._get_property("video-params/h")
+            result["resolution"] = f"{w}x{h}" if w and h else ""
+        except Exception:
+            result["fps"] = 0
+            result["dropped_frames"] = 0
+            result["decoder_drops"] = 0
+            result["resolution"] = ""
         return result
 
     async def set_overlay(self, overlay_id: int, ass_text: str) -> None:

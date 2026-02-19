@@ -592,6 +592,21 @@ input[type="range"] {
 .indicator.red   { background: var(--color-danger); }
 .indicator.grey  { background: #a8a29e; }
 
+.perf-line {
+    margin-top: 4px;
+    padding-left: 18px;
+    font-size: 0.82rem;
+    color: var(--color-muted);
+}
+.perf-sep {
+    margin: 0 6px;
+    opacity: 0.4;
+}
+.perf-drops-warn {
+    color: var(--color-warning);
+    font-weight: 600;
+}
+
 @keyframes pulse-green {
     0%   { box-shadow: 0 0 0 0 rgba(22,163,74,.4); }
     70%  { box-shadow: 0 0 0 6px rgba(22,163,74,0); }

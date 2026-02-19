@@ -33,6 +33,7 @@
       "netType", "netIp", "netSsid", "netSignal", "netStatusCard",
       "setupBanner", "setupChecklist",
       "hostnameDisplay", "toastContainer", "hwdecCurrent",
+      "mpvPerfLine", "mpvRes", "mpvFps", "mpvDrops",
     ];
     ids.forEach(function (id) { _el[id] = document.getElementById(id); });
   }
@@ -274,6 +275,20 @@
         mpvLine.innerHTML = '<span class="indicator grey"></span>Idle';
       } else {
         mpvLine.innerHTML = '<span class="indicator red"></span>Stopped';
+      }
+    }
+
+    // mpv performance stats
+    if (_el.mpvPerfLine) {
+      if (d.mpv.playing && d.mpv.fps) {
+        _el.mpvPerfLine.style.display = "";
+        _el.mpvRes.textContent = d.mpv.resolution || "--";
+        _el.mpvFps.textContent = d.mpv.fps ? d.mpv.fps.toFixed(1) : "--";
+        var totalDrops = (d.mpv.dropped_frames || 0) + (d.mpv.decoder_drops || 0);
+        _el.mpvDrops.textContent = totalDrops;
+        _el.mpvDrops.className = totalDrops > 10 ? "perf-drops-warn" : "";
+      } else {
+        _el.mpvPerfLine.style.display = "none";
       }
     }
 
