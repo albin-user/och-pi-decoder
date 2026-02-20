@@ -278,6 +278,11 @@ class TestGetStatus:
             False,   # idle-active
             "http://example.com/stream.m3u8",  # path
             "v4l2m2m",  # hwdec-current
+            29.97,   # estimated-vf-fps
+            0,       # frame-drop-count
+            0,       # decoder-frame-drop-count
+            1920,    # video-params/w
+            1080,    # video-params/h
         ])
         status = await mgr.get_status()
         assert status["alive"] is True
@@ -286,6 +291,8 @@ class TestGetStatus:
         assert status["playing"] is True
         assert status["stream_url"] == "http://example.com/stream.m3u8"
         assert status["hwdec_current"] == "v4l2m2m"
+        assert status["fps"] == 29.97
+        assert status["resolution"] == "1920x1080"
 
     async def test_status_when_paused(self):
         mgr = _make_manager()
@@ -295,6 +302,11 @@ class TestGetStatus:
             False,   # idle-active
             "http://example.com/stream.m3u8",  # path
             "",      # hwdec-current
+            0,       # estimated-vf-fps
+            0,       # frame-drop-count
+            0,       # decoder-frame-drop-count
+            None,    # video-params/w
+            None,    # video-params/h
         ])
         status = await mgr.get_status()
         assert status["paused"] is True
@@ -308,6 +320,11 @@ class TestGetStatus:
             True,    # idle-active
             None,    # path
             None,    # hwdec-current
+            0,       # estimated-vf-fps
+            0,       # frame-drop-count
+            0,       # decoder-frame-drop-count
+            None,    # video-params/w
+            None,    # video-params/h
         ])
         status = await mgr.get_status()
         assert status["idle"] is True
@@ -523,6 +540,49 @@ class TestBuildIdleOverlay:
 
         assert "WiFi Setup:" not in result
         assert "Password:" not in result
+
+
+# ── ytdl_format ──────────────────────────────────────────────────────────
+
+
+class TestYtdlFormat:
+    def test_default_1080p(self):
+        mgr = _make_manager()
+        fmt = mgr._ytdl_format()
+        assert fmt == "bestvideo[height<=1080]+bestaudio/best[height<=1080]"
+
+    def test_720p(self):
+        cfg = _make_config(**{"stream.max_resolution": "720"})
+        mgr = MpvManager(cfg)
+        fmt = mgr._ytdl_format()
+        assert fmt == "bestvideo[height<=720]+bestaudio/best[height<=720]"
+
+    def test_best(self):
+        cfg = _make_config(**{"stream.max_resolution": "best"})
+        mgr = MpvManager(cfg)
+        fmt = mgr._ytdl_format()
+        assert fmt == "bestvideo+bestaudio/best"
+
+    @patch("pi_decoder.mpv_manager.Path")
+    @patch("asyncio.create_subprocess_exec", new_callable=AsyncMock)
+    @patch("asyncio.sleep", new_callable=AsyncMock)
+    async def test_start_uses_max_resolution_in_ytdl_format(
+        self, mock_sleep, mock_exec, mock_path_cls
+    ):
+        cfg = _make_config(**{"stream.max_resolution": "720"})
+        mgr = MpvManager(cfg)
+        mock_proc = MagicMock()
+        mock_proc.returncode = None
+        mock_exec.return_value = mock_proc
+        mgr._connect_ipc = AsyncMock()
+        mock_path_cls.return_value.exists.return_value = True
+
+        with patch("asyncio.create_task") as mock_task:
+            mock_task.return_value = MagicMock(done=MagicMock(return_value=False))
+            await mgr.start()
+
+        call_args = mock_exec.call_args[0]
+        assert "--ytdl-format=bestvideo[height<=720]+bestaudio/best[height<=720]" in call_args
 
 
 # ── Process lifecycle: start ─────────────────────────────────────────────────
@@ -792,8 +852,8 @@ class TestRestart:
         async def mock_start():
             call_order.append("start")
 
-        mgr.stop = mock_stop
-        mgr.start = mock_start
+        mgr._stop_unlocked = mock_stop
+        mgr._start_unlocked = mock_start
 
         with patch("asyncio.sleep", new_callable=AsyncMock):
             await mgr.restart()
@@ -1279,3 +1339,113 @@ class TestHealthLoop:
         assert mgr._stream_retry_backoff == 7.5
         mgr.load_stream.assert_awaited()
         assert mgr._last_connection_type == "ethernet"
+
+
+# ── Failover: backup URL ─────────────────────────────────────────────────
+
+
+class TestFailoverBackupUrl:
+    def test_initial_failover_state(self):
+        mgr = _make_manager()
+        assert mgr._stream_failures == 0
+        assert mgr._using_backup is False
+
+    def test_stream_failures_increment(self):
+        mgr = _make_manager()
+        mgr._stream_failures = 1
+        mgr._stream_failures += 1
+        assert mgr._stream_failures == 2
+
+    async def test_failover_to_backup_at_threshold(self):
+        """After 3 consecutive idle retries, switch to backup URL."""
+        cfg = _make_config(**{
+            "stream.url": "rtmp://primary.local/live",
+            "stream.backup_url": "rtmp://backup.local/live",
+        })
+        mgr = MpvManager(cfg)
+        _attach_mock_process(mgr, alive=True)
+        mgr._last_stream_attempt = 0.0
+        mgr._stream_retry_backoff = 5.0
+        # Pre-set to 2 failures — next idle retry will be the 3rd
+        mgr._stream_failures = 2
+
+        call_count = 0
+
+        async def fake_sleep(duration):
+            nonlocal call_count
+            call_count += 1
+            if call_count >= 2:
+                mgr._stopping = True
+
+        mgr._get_property = AsyncMock(return_value="mpv 0.38.0")
+        mgr.get_status = AsyncMock(return_value={"idle": True})
+        mgr.set_overlay = AsyncMock()
+        mgr.load_stream = AsyncMock()
+
+        with patch("asyncio.sleep", side_effect=fake_sleep), \
+             patch("asyncio.wait_for", new_callable=AsyncMock), \
+             patch("pi_decoder.mpv_manager._get_network_info", return_value={
+                 "connection_type": "ethernet",
+                 "ip": "192.168.1.1",
+                 "ssid": "",
+                 "hotspot_active": False,
+                 "signal": 0,
+             }):
+            await mgr._health_loop()
+
+        # Should have switched to backup URL
+        assert mgr._using_backup is True
+        mgr.load_stream.assert_awaited_with("rtmp://backup.local/live")
+
+    async def test_stays_on_backup(self):
+        """Once using_backup=True, continues using backup URL on subsequent retries."""
+        cfg = _make_config(**{
+            "stream.url": "rtmp://primary.local/live",
+            "stream.backup_url": "rtmp://backup.local/live",
+        })
+        mgr = MpvManager(cfg)
+        _attach_mock_process(mgr, alive=True)
+        mgr._last_stream_attempt = 0.0
+        mgr._stream_retry_backoff = 5.0
+        mgr._using_backup = True
+        mgr._stream_failures = 5
+
+        call_count = 0
+
+        async def fake_sleep(duration):
+            nonlocal call_count
+            call_count += 1
+            if call_count >= 2:
+                mgr._stopping = True
+
+        mgr._get_property = AsyncMock(return_value="mpv 0.38.0")
+        mgr.get_status = AsyncMock(return_value={"idle": True})
+        mgr.set_overlay = AsyncMock()
+        mgr.load_stream = AsyncMock()
+
+        with patch("asyncio.sleep", side_effect=fake_sleep), \
+             patch("asyncio.wait_for", new_callable=AsyncMock), \
+             patch("pi_decoder.mpv_manager._get_network_info", return_value={
+                 "connection_type": "ethernet",
+                 "ip": "192.168.1.1",
+                 "ssid": "",
+                 "hotspot_active": False,
+                 "signal": 0,
+             }):
+            await mgr._health_loop()
+
+        mgr.load_stream.assert_awaited_with("rtmp://backup.local/live")
+
+    def test_reset_stream_retry_clears_failover(self):
+        mgr = _make_manager()
+        mgr._stream_failures = 5
+        mgr._using_backup = True
+        mgr.reset_stream_retry()
+        assert mgr._stream_failures == 0
+        assert mgr._using_backup is False
+
+    def test_using_backup_property(self):
+        mgr = _make_manager()
+        assert mgr.using_backup is False
+        mgr._using_backup = True
+        assert mgr.using_backup is True

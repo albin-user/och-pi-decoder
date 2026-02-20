@@ -35,6 +35,8 @@ def mock_mpv():
     mpv.restart = AsyncMock()
     mpv.reset_stream_retry = MagicMock()
     mpv.take_screenshot = AsyncMock(return_value=None)
+    mpv.stop_stream = AsyncMock()
+    mpv.load_stream = AsyncMock()
     return mpv
 
 
@@ -58,6 +60,7 @@ def mock_pco():
     pco = MagicMock()
     pco.update_credentials = MagicMock()
     pco.credential_error = ""
+    pco.consecutive_failures = 0
     pco.get_service_types = AsyncMock(return_value=[])
     pco.test_connection = AsyncMock(return_value={"success": True, "service_types": []})
     pco.close = AsyncMock()
@@ -384,7 +387,9 @@ class TestConfigImport:
                 files={"file": ("config.toml", toml_content, "application/toml")},
             )
         assert resp.status_code == 200
-        mock_validate.assert_called_once_with(config)
+        # Called twice: once for pre-validation rollback check, once for final save
+        assert mock_validate.call_count == 2
+        mock_validate.assert_called_with(config)
 
 
 class TestRestartEndpoints:
@@ -446,9 +451,10 @@ class TestWebSocket:
             data = ws.receive_json()
         assert "hotspot_password" not in data["network"]
 
+    @patch("pi_decoder.cec.is_available", return_value=True)
     @patch("pi_decoder.cec.get_power_status", new_callable=AsyncMock, return_value="standby")
     @patch("pi_decoder.network.get_network_info_sync", return_value={})
-    def test_ws_status_includes_cec_power(self, _mock_net, _mock_cec, client):
+    def test_ws_status_includes_cec_power(self, _mock_net, _mock_cec, _mock_avail, client):
         with client.websocket_connect("/ws/status") as ws:
             data = ws.receive_json()
         assert data["cec"]["power"] == "standby"
@@ -682,6 +688,102 @@ class TestRebootShutdown:
         assert resp.json()["ok"] is True
 
 
+class TestStreamMaxResolution:
+    def test_save_max_resolution_valid(self, client, config):
+        resp = client.post("/api/config/stream", json={
+            "url": "rtmp://test.local/live",
+            "network_caching": 2000,
+            "max_resolution": "720",
+        })
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+        assert config.stream.max_resolution == "720"
+
+    def test_save_max_resolution_invalid_rejected(self, client, config):
+        config.stream.max_resolution = "1080"
+        resp = client.post("/api/config/stream", json={
+            "url": "rtmp://test.local/live",
+            "network_caching": 2000,
+            "max_resolution": "4k",
+        })
+        assert resp.status_code == 400
+        data = resp.json()
+        assert data["ok"] is False
+        assert "Invalid max_resolution" in data["error"]
+        assert config.stream.max_resolution == "1080"
+
+    def test_save_max_resolution_omitted_keeps_existing(self, client, config):
+        config.stream.max_resolution = "720"
+        resp = client.post("/api/config/stream", json={
+            "url": "rtmp://test.local/live",
+            "network_caching": 2000,
+        })
+        assert resp.status_code == 200
+        assert config.stream.max_resolution == "720"
+
+    def test_save_max_resolution_best(self, client, config):
+        resp = client.post("/api/config/stream", json={
+            "url": "rtmp://test.local/live",
+            "network_caching": 2000,
+            "max_resolution": "best",
+        })
+        assert resp.status_code == 200
+        assert config.stream.max_resolution == "best"
+
+
+class TestDisplayModes:
+    @patch("pi_decoder.display.get_current_resolution", return_value="1920x1080@60D")
+    @patch("pi_decoder.display.get_available_modes", return_value=["1920x1080", "1280x720"])
+    def test_get_display_modes(self, _mock_modes, _mock_current, client):
+        resp = client.get("/api/display/modes")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["modes"] == ["1920x1080", "1280x720"]
+        assert data["current"] == "1920x1080@60D"
+
+
+class TestDisplayResolution:
+    @patch("pi_decoder.display.set_display_resolution", new_callable=AsyncMock)
+    def test_set_resolution_valid(self, _mock_set, client, config):
+        resp = client.post("/api/display/resolution", json={
+            "resolution": "1280x720@60D",
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert config.display.hdmi_resolution == "1280x720@60D"
+        _mock_set.assert_awaited_once_with("1280x720@60D")
+
+    def test_set_resolution_empty_rejected(self, client):
+        resp = client.post("/api/display/resolution", json={
+            "resolution": "",
+        })
+        assert resp.status_code == 400
+        data = resp.json()
+        assert data["ok"] is False
+        assert "required" in data["error"]
+
+    def test_set_resolution_invalid_format_rejected(self, client):
+        resp = client.post("/api/display/resolution", json={
+            "resolution": "invalid-res",
+        })
+        assert resp.status_code == 400
+        data = resp.json()
+        assert data["ok"] is False
+        assert "Invalid resolution" in data["error"]
+
+    @patch("pi_decoder.display.set_display_resolution", new_callable=AsyncMock,
+           side_effect=RuntimeError("cmdline.txt not found"))
+    def test_set_resolution_write_failure(self, _mock_set, client):
+        resp = client.post("/api/display/resolution", json={
+            "resolution": "1920x1080@60D",
+        })
+        assert resp.status_code == 500
+        data = resp.json()
+        assert data["ok"] is False
+        assert "Failed" in data["error"]
+
+
 class TestCecErrorPaths:
     @patch("pi_decoder.cec.power_on", new_callable=AsyncMock, side_effect=Exception("CEC failed"))
     def test_cec_on_error(self, _mock, client):
@@ -690,3 +792,163 @@ class TestCecErrorPaths:
         data = resp.json()
         assert data["ok"] is False
         assert "CEC" in data["error"]
+
+
+class TestStreamPresets:
+    def test_get_presets_returns_list(self, client, config):
+        config.stream.presets = [
+            {"label": "Church", "url": "rtmp://church.local/live"},
+            {"label": "Backup", "url": "rtmp://backup.local/live"},
+        ]
+        resp = client.get("/api/stream/presets")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data["presets"]) == 2
+        assert data["presets"][0]["label"] == "Church"
+
+    def test_get_presets_empty(self, client, config):
+        config.stream.presets = []
+        resp = client.get("/api/stream/presets")
+        assert resp.status_code == 200
+        assert resp.json()["presets"] == []
+
+
+class TestStreamPresetsSave:
+    def test_save_presets_valid(self, client, config):
+        resp = client.post("/api/stream/presets", json={
+            "presets": [
+                {"label": "Church", "url": "rtmp://church.local/live"},
+                {"label": "Backup", "url": "rtmp://backup.local/live"},
+            ],
+        })
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+        assert len(config.stream.presets) == 2
+
+    def test_save_presets_max_10_rejected(self, client):
+        presets = [{"label": f"P{i}", "url": f"rtmp://host{i}/live"} for i in range(11)]
+        resp = client.post("/api/stream/presets", json={"presets": presets})
+        assert resp.status_code == 400
+        assert "Max 10" in resp.json()["error"]
+
+    def test_save_presets_drops_empty_label(self, client, config):
+        resp = client.post("/api/stream/presets", json={
+            "presets": [
+                {"label": "", "url": "rtmp://host/live"},
+                {"label": "Valid", "url": "rtmp://valid/live"},
+            ],
+        })
+        assert resp.status_code == 200
+        assert len(config.stream.presets) == 1
+        assert config.stream.presets[0]["label"] == "Valid"
+
+    def test_save_presets_truncates_label(self, client, config):
+        long_label = "A" * 60
+        resp = client.post("/api/stream/presets", json={
+            "presets": [{"label": long_label, "url": "rtmp://host/live"}],
+        })
+        assert resp.status_code == 200
+        assert len(config.stream.presets[0]["label"]) == 50
+
+
+class TestStreamSwitch:
+    def test_switch_success(self, client, config, mock_mpv):
+        resp = client.post("/api/stream/switch", json={"url": "rtmp://new.local/live"})
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+        assert config.stream.url == "rtmp://new.local/live"
+        mock_mpv.restart.assert_awaited_once()
+
+    def test_switch_empty_url(self, client):
+        resp = client.post("/api/stream/switch", json={"url": ""})
+        assert resp.status_code == 400
+        assert "URL required" in resp.json()["error"]
+
+    def test_switch_restart_failure(self, client, mock_mpv):
+        mock_mpv.restart = AsyncMock(side_effect=RuntimeError("mpv crash"))
+        resp = client.post("/api/stream/switch", json={"url": "rtmp://host/live"})
+        assert resp.status_code == 500
+        assert "restart failed" in resp.json()["error"]
+
+
+class TestStreamSwitchBack:
+    def test_switch_back_success(self, client, mock_mpv):
+        resp = client.post("/api/stream/switch-back")
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+        mock_mpv.reset_stream_retry.assert_called_once()
+        mock_mpv.restart.assert_awaited_once()
+
+    def test_switch_back_restart_failure(self, client, mock_mpv):
+        mock_mpv.restart = AsyncMock(side_effect=RuntimeError("mpv crash"))
+        resp = client.post("/api/stream/switch-back")
+        assert resp.status_code == 500
+        assert "failed" in resp.json()["error"]
+
+
+class TestNetworkPing:
+    @patch("subprocess.run")
+    def test_ping_success(self, mock_run, client):
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout="PING host (1.2.3.4): 3 packets\nrtt min/avg/max = 5.0/10.5/15.0 ms",
+        )
+        resp = client.post("/api/network/ping", json={"host": "example.com"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert data["reachable"] is True
+        assert data["avg_ms"] == 10.5
+
+    def test_ping_invalid_hostname(self, client):
+        resp = client.post("/api/network/ping", json={"host": "bad;host"})
+        assert resp.status_code == 400
+        assert "Invalid hostname" in resp.json()["error"]
+
+    def test_ping_falls_back_to_stream_url(self, client, config):
+        config.stream.url = "rtmp://stream.example.com/live"
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=0,
+                stdout="rtt min/avg/max = 1.0/2.0/3.0 ms",
+            )
+            resp = client.post("/api/network/ping", json={"host": ""})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["host"] == "stream.example.com"
+
+    def test_ping_no_host_no_url(self, client, config):
+        config.stream.url = ""
+        resp = client.post("/api/network/ping", json={"host": ""})
+        assert resp.status_code == 400
+        assert "No host" in resp.json()["error"]
+
+    @patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="ping", timeout=15))
+    def test_ping_timeout(self, _mock, client):
+        resp = client.post("/api/network/ping", json={"host": "slow.example.com"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["reachable"] is False
+        assert "timed out" in data["output"].lower()
+
+
+class TestLogsDownload:
+    @patch("socket.gethostname", return_value="test-decoder")
+    @patch("subprocess.run")
+    def test_download_returns_text_file(self, mock_run, _mock_host, client):
+        mock_run.return_value = MagicMock(stdout="log line 1\nlog line 2\n")
+        resp = client.get("/api/logs/download")
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "text/plain; charset=utf-8"
+        assert 'test-decoder-pi-decoder-logs.txt' in resp.headers["content-disposition"]
+        assert "log line 1" in resp.text
+
+
+class TestRestartVideoError:
+    def test_restart_video_error(self, client, mock_mpv):
+        mock_mpv.restart = AsyncMock(side_effect=RuntimeError("mpv segfault"))
+        resp = client.post("/api/restart/video")
+        assert resp.status_code == 500
+        data = resp.json()
+        assert data["ok"] is False
+        assert "mpv segfault" in data["error"]

@@ -978,6 +978,54 @@ class TestClose:
         await client.close()
 
 
+class TestCircuitBreaker:
+    """Test circuit breaker: exponential backoff after consecutive failures."""
+
+    def test_record_failure_increments_count(self, pco_config):
+        client = PCOClient(pco_config)
+        assert client._consecutive_failures == 0
+        client._record_failure()
+        assert client._consecutive_failures == 1
+        # Below threshold — no backoff
+        assert client._backoff_until == 0.0
+
+    def test_circuit_breaker_activates_at_threshold(self, pco_config):
+        import time
+        client = PCOClient(pco_config)
+        for _ in range(5):
+            client._record_failure()
+        assert client._consecutive_failures == 5
+        assert client._backoff_until > time.monotonic() - 1
+
+    def test_exponential_backoff_scales(self, pco_config):
+        import time
+        client = PCOClient(pco_config)
+        client._consecutive_failures = 6  # already past threshold
+        client._record_failure()  # now 7 failures
+        # backoff = min(2^(7-5), 300) = min(4, 300) = 4
+        expected_backoff = 4
+        assert client._backoff_until == pytest.approx(time.monotonic() + expected_backoff, abs=1.0)
+
+    @pytest.mark.asyncio
+    async def test_circuit_breaker_skips_poll(self, pco_config):
+        import time
+        client = PCOClient(pco_config)
+        client._consecutive_failures = 5
+        client._backoff_until = time.monotonic() + 300  # far in the future
+        client._cached_status = LiveStatus(message="cached during backoff")
+
+        status = await client.get_live_status()
+        assert status.message == "cached during backoff"
+
+    def test_update_credentials_resets_circuit_breaker(self, pco_config):
+        client = PCOClient(pco_config)
+        client._consecutive_failures = 10
+        client._backoff_until = 99999.0
+        client.update_credentials("new", "new", "1")
+        assert client._consecutive_failures == 0
+        assert client._backoff_until == 0.0
+
+
 class TestUpdateCredentials:
     """Test credential update with folder/search mode."""
 

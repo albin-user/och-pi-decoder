@@ -13,6 +13,7 @@ from pi_decoder.config import (
     PCOConfig,
     WebConfig,
     NetworkConfig,
+    DisplayConfig,
     load_config,
     save_config,
     to_dict_safe,
@@ -26,6 +27,8 @@ class TestConfigDefaults:
         cfg = StreamConfig()
         assert cfg.url == ""
         assert cfg.network_caching == 2000
+        assert cfg.hwdec == "auto"
+        assert cfg.max_resolution == "1080"
 
     def test_overlay_defaults(self):
         cfg = OverlayConfig()
@@ -63,6 +66,10 @@ class TestConfigDefaults:
         assert cfg.ethernet_timeout == 10
         assert cfg.wifi_timeout == 40
 
+    def test_display_defaults(self):
+        cfg = DisplayConfig()
+        assert cfg.hdmi_resolution == "1920x1080@60D"
+
     def test_full_config_defaults(self):
         cfg = Config()
         assert isinstance(cfg.general, GeneralConfig)
@@ -71,6 +78,7 @@ class TestConfigDefaults:
         assert isinstance(cfg.pco, PCOConfig)
         assert isinstance(cfg.web, WebConfig)
         assert isinstance(cfg.network, NetworkConfig)
+        assert isinstance(cfg.display, DisplayConfig)
 
 
 class TestLoadConfig:
@@ -257,6 +265,42 @@ port = 0
         cfg = load_config(tmp_config)
         assert cfg.web.port == 1  # minimum
 
+    def test_invalid_max_resolution_defaults(self, tmp_config: Path):
+        """Invalid max_resolution should default to 1080."""
+        tmp_config.write_text("""
+[stream]
+max_resolution = "4k"
+""")
+        cfg = load_config(tmp_config)
+        assert cfg.stream.max_resolution == "1080"
+
+    def test_valid_max_resolution_preserved(self, tmp_config: Path):
+        """Valid max_resolution values should be preserved."""
+        tmp_config.write_text("""
+[stream]
+max_resolution = "720"
+""")
+        cfg = load_config(tmp_config)
+        assert cfg.stream.max_resolution == "720"
+
+    def test_invalid_hdmi_resolution_defaults(self, tmp_config: Path):
+        """Invalid hdmi_resolution should default to 1920x1080@60D."""
+        tmp_config.write_text("""
+[display]
+hdmi_resolution = "not-a-resolution"
+""")
+        cfg = load_config(tmp_config)
+        assert cfg.display.hdmi_resolution == "1920x1080@60D"
+
+    def test_valid_hdmi_resolution_preserved(self, tmp_config: Path):
+        """Valid hdmi_resolution values should be preserved."""
+        tmp_config.write_text("""
+[display]
+hdmi_resolution = "1280x720@50D"
+""")
+        cfg = load_config(tmp_config)
+        assert cfg.display.hdmi_resolution == "1280x720@50D"
+
     def test_network_timeouts_clamped(self, tmp_config: Path):
         """Network timeouts should be clamped to valid range."""
         tmp_config.write_text("""
@@ -357,24 +401,28 @@ class TestSaveConfig:
         cfg = Config()
         cfg.general.name = "Test Decoder"
         cfg.stream.url = "http://roundtrip.local/stream"
+        cfg.stream.max_resolution = "720"
         cfg.overlay.enabled = True
         cfg.overlay.font_size = 80
         cfg.pco.app_id = "saved_id"
         cfg.web.port = 9000
         cfg.network.hotspot_ssid = "TestHotspot"
         cfg.network.wifi_timeout = 30
+        cfg.display.hdmi_resolution = "1280x720@50D"
 
         save_config(cfg, tmp_config)
         loaded = load_config(tmp_config)
 
         assert loaded.general.name == "Test Decoder"
         assert loaded.stream.url == "http://roundtrip.local/stream"
+        assert loaded.stream.max_resolution == "720"
         assert loaded.overlay.enabled is True
         assert loaded.overlay.font_size == 80
         assert loaded.pco.app_id == "saved_id"
         assert loaded.web.port == 9000
         assert loaded.network.hotspot_ssid == "TestHotspot"
         assert loaded.network.wifi_timeout == 30
+        assert loaded.display.hdmi_resolution == "1280x720@50D"
 
     def test_save_creates_parent_directory(self, tmp_path: Path):
         """Saving should create parent directories if needed."""
@@ -382,6 +430,28 @@ class TestSaveConfig:
         cfg = Config()
         save_config(cfg, config_path)
         assert config_path.exists()
+
+    def test_backup_url_roundtrip(self, tmp_config: Path):
+        """Save and load should preserve backup_url."""
+        cfg = Config()
+        cfg.stream.url = "rtmp://primary.local/live"
+        cfg.stream.backup_url = "rtmp://backup.local/live"
+        save_config(cfg, tmp_config)
+        loaded = load_config(tmp_config)
+        assert loaded.stream.backup_url == "rtmp://backup.local/live"
+
+    def test_presets_roundtrip(self, tmp_config: Path):
+        """Save and load should preserve presets list-of-dicts."""
+        cfg = Config()
+        cfg.stream.presets = [
+            {"label": "Church", "url": "rtmp://church.local/live"},
+            {"label": "Backup", "url": "rtmp://backup.local/live"},
+        ]
+        save_config(cfg, tmp_config)
+        loaded = load_config(tmp_config)
+        assert len(loaded.stream.presets) == 2
+        assert loaded.stream.presets[0]["label"] == "Church"
+        assert loaded.stream.presets[1]["url"] == "rtmp://backup.local/live"
 
 
 class TestToDictSafe:
@@ -406,5 +476,5 @@ class TestToDictSafe:
     def test_other_sections_present(self):
         cfg = Config()
         data = to_dict_safe(cfg)
-        for section in ("general", "stream", "overlay", "pco", "web", "network"):
+        for section in ("general", "stream", "overlay", "pco", "web", "network", "display"):
             assert section in data
