@@ -3,3 +3,5 @@ pi ALL=(ALL) NOPASSWD: /sbin/reboot
 pi ALL=(ALL) NOPASSWD: /sbin/poweroff
 pi ALL=(ALL) NOPASSWD: /usr/bin/hostnamectl set-hostname *
 pi ALL=(ALL) NOPASSWD: /usr/bin/tee /etc/hosts
+pi ALL=(ALL) NOPASSWD: /usr/bin/tee /boot/firmware/cmdline.txt
+pi ALL=(ALL) NOPASSWD: /usr/bin/tee /boot/cmdline.txt

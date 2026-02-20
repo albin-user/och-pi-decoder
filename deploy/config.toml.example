@@ -3,7 +3,11 @@ name = "Pi-Decoder"                # custom name shown in UI and idle screen
 
 [stream]
 url = "http://192.168.1.50:8080/stream.m3u8"
+backup_url = ""              # failover URL — auto-switches after 3 consecutive failures
 network_caching = 2000       # ms, buffer for WiFi stability
+hwdec = "auto"               # hardware decoder: auto, auto-safe, v4l2m2m, no
+max_resolution = "1080"      # YouTube quality cap: best, 2160, 1440, 1080, 720, 480
+presets = []                 # quick-switch bookmarks: [{label = "Main", url = "rtmp://..."}]
 
 [overlay]
 enabled = false              # toggle per-Pi
@@ -26,10 +30,13 @@ search_mode = "service_type"  # "service_type" or "folder"
 poll_interval = 5            # seconds between PCO API calls
 
 [web]
-port = 80
+port = 80                           # Changing the port requires a service restart: sudo systemctl restart pi-decoder
 
 [network]
 hotspot_ssid = "Pi-Decoder"
 hotspot_password = "pidecodersetup"
 ethernet_timeout = 10           # seconds to wait for ethernet at boot
 wifi_timeout = 40               # seconds to wait for WiFi after ethernet timeout
+
+[display]
+hdmi_resolution = "1920x1080@60D"  # HDMI output: WxH@RateD (e.g. 1920x1080@60D)

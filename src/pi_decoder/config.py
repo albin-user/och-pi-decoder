@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import logging
 import os
+import re
+import shutil
 import sys
+import tempfile
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 
@@ -29,8 +32,11 @@ DEFAULT_CONFIG_PATH = Path("/etc/pi-decoder/config.toml")
 @dataclass
 class StreamConfig:
     url: str = ""
+    backup_url: str = ""  # failover URL — auto-switch after consecutive failures
     network_caching: int = 2000
     hwdec: str = "auto"
+    max_resolution: str = "1080"
+    presets: list = field(default_factory=list)  # [{label: str, url: str}, ...]
 
 
 @dataclass
@@ -84,6 +90,11 @@ class NetworkConfig:
 
 
 @dataclass
+class DisplayConfig:
+    hdmi_resolution: str = "1920x1080@60D"
+
+
+@dataclass
 class Config:
     general: GeneralConfig = field(default_factory=GeneralConfig)
     stream: StreamConfig = field(default_factory=StreamConfig)
@@ -91,6 +102,7 @@ class Config:
     pco: PCOConfig = field(default_factory=PCOConfig)
     web: WebConfig = field(default_factory=WebConfig)
     network: NetworkConfig = field(default_factory=NetworkConfig)
+    display: DisplayConfig = field(default_factory=DisplayConfig)
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -111,6 +123,9 @@ def _apply_dict(dc: object, data: dict) -> None:
                     val = val.lower() in ("true", "1", "yes")
             elif f.type in ("str", str):
                 val = str(val)
+            elif f.type in ("list", list):
+                if not isinstance(val, list):
+                    val = list(val)
             setattr(dc, f.name, val)
 
 
@@ -216,6 +231,22 @@ def validate_config(cfg: Config) -> None:
         cfg.pco.search_mode = "service_type"
     cfg.web.port = max(1, min(cfg.web.port, 65535))
 
+    # Stream max resolution validation
+    _allowed_max_res = {"best", "2160", "1440", "1080", "720", "480"}
+    if cfg.stream.max_resolution not in _allowed_max_res:
+        cfg.stream.max_resolution = "1080"
+
+    # HDMI resolution validation — tightened ranges and known refresh rates
+    _valid_refresh = {24, 25, 30, 50, 60, 120}
+    _hdmi_m = re.match(r'^(\d+)x(\d+)(?:@(\d+)(D)?)?$', cfg.display.hdmi_resolution)
+    if _hdmi_m:
+        _w, _h = int(_hdmi_m.group(1)), int(_hdmi_m.group(2))
+        _rate = int(_hdmi_m.group(3)) if _hdmi_m.group(3) else 60
+        if not (320 <= _w <= 7680 and 240 <= _h <= 4320 and _rate in _valid_refresh):
+            cfg.display.hdmi_resolution = "1920x1080@60D"
+    else:
+        cfg.display.hdmi_resolution = "1920x1080@60D"
+
     # Static IP validation
     _validate_static_ip(cfg.network, "eth")
     _validate_static_ip(cfg.network, "wifi")
@@ -242,6 +273,8 @@ def load_config(path: str | Path | None = None) -> Config:
                 _apply_dict(cfg.web, raw["web"])
             if "network" in raw:
                 _apply_dict(cfg.network, raw["network"])
+            if "display" in raw:
+                _apply_dict(cfg.display, raw["display"])
         except Exception:
             log.exception("Failed to parse config at %s — using defaults", path)
     else:
@@ -261,6 +294,7 @@ def to_dict_safe(cfg: Config) -> dict:
         "pco": _section_to_dict(cfg.pco),
         "web": _section_to_dict(cfg.web),
         "network": _section_to_dict(cfg.network),
+        "display": _section_to_dict(cfg.display),
     }
     # Strip secrets
     data["pco"].pop("secret", None)
@@ -268,7 +302,7 @@ def to_dict_safe(cfg: Config) -> dict:
 
 
 def save_config(cfg: Config, path: str | Path | None = None) -> None:
-    """Write Config back to TOML."""
+    """Write Config back to TOML atomically with backup."""
     path = Path(path) if path else DEFAULT_CONFIG_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -279,10 +313,28 @@ def save_config(cfg: Config, path: str | Path | None = None) -> None:
         "pco": _section_to_dict(cfg.pco),
         "web": _section_to_dict(cfg.web),
         "network": _section_to_dict(cfg.network),
+        "display": _section_to_dict(cfg.display),
     }
 
-    with open(path, "wb") as fp:
-        tomli_w.dump(data, fp)
+    # Backup existing config before overwrite
+    if path.exists():
+        try:
+            shutil.copy2(path, path.parent / (path.name + ".bak"))
+        except OSError:
+            log.warning("Could not create config backup")
+
+    # Atomic write: temp file + os.replace
+    tmp_path = path.parent / (path.name + ".tmp")
+    try:
+        with open(tmp_path, "wb") as fp:
+            tomli_w.dump(data, fp)
+        os.replace(tmp_path, path)
+    except Exception:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
 
     # secure permissions (ignore errors on non-Linux)
     try:

@@ -70,27 +70,27 @@
         <!-- TV group -->
         <div class="control-group-label">TV</div>
         <div class="control-grid">
-          <button class="control-card" onclick="cecPowerOn(event)" id="cardTvOn" aria-label="TV Power On">
+          <button class="control-card" onclick="cecPowerOn(event)" id="cardTvOn" aria-label="TV Power On" data-cec>
             <svg class="control-icon" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><line x1="12" y1="5" x2="12" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
             <span class="control-label">TV On</span>
           </button>
-          <button class="control-card" onclick="cecStandby()" aria-label="TV Standby">
+          <button class="control-card" onclick="cecStandby()" aria-label="TV Standby" data-cec>
             <svg class="control-icon" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><line x1="12" y1="5" x2="12" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="12" y1="3" x2="12" y2="7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
             <span class="control-label">TV Off</span>
           </button>
-          <button class="control-card" onclick="cecActiveSource(event)" aria-label="Show Live Video on TV">
+          <button class="control-card" onclick="cecActiveSource(event)" aria-label="Show Live Video on TV" data-cec>
             <svg class="control-icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><polygon points="10,9 16,12 10,15" fill="currentColor"/></svg>
             <span class="control-label">Live Video</span>
           </button>
-          <button class="control-card" onclick="cecVolumeUp(event)" aria-label="Volume Up">
+          <button class="control-card" onclick="cecVolumeUp(event)" aria-label="Volume Up" data-cec>
             <svg class="control-icon" aria-hidden="true" viewBox="0 0 24 24"><polygon points="6,9 10,9 14,5 14,19 10,15 6,15" fill="currentColor"/><path d="M17 8.5 C18.3 10 18.3 14 17 15.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
             <span class="control-label">Vol +</span>
           </button>
-          <button class="control-card" onclick="cecVolumeDown(event)" aria-label="Volume Down">
+          <button class="control-card" onclick="cecVolumeDown(event)" aria-label="Volume Down" data-cec>
             <svg class="control-icon" aria-hidden="true" viewBox="0 0 24 24"><polygon points="8,9 12,9 16,5 16,19 12,15 8,15" fill="currentColor"/></svg>
             <span class="control-label">Vol -</span>
           </button>
-          <button class="control-card" onclick="cecMute(event)" aria-label="Mute">
+          <button class="control-card" onclick="cecMute(event)" aria-label="Mute" data-cec>
             <svg class="control-icon" aria-hidden="true" viewBox="0 0 24 24"><polygon points="6,9 10,9 14,5 14,19 10,15 6,15" fill="currentColor"/><line x1="18" y1="9" x2="22" y2="15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="22" y1="9" x2="18" y2="15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
             <span class="control-label">Mute</span>
           </button>
@@ -171,8 +171,12 @@
             <span id="mpvDrops">0</span> dropped
           </div>
         </div>
-        <div class="mb-20">
+        <div class="mb-12">
           <div id="overlayStatusLine"><span class="indicator grey"></span>Connecting...</div>
+        </div>
+        <div id="dashCountdown" class="dash-countdown" style="display:none">
+          <span id="dashCountdownTimer" class="dash-countdown-timer"></span>
+          <span id="dashCountdownLabel" class="dash-countdown-label"></span>
         </div>
 
         <h3 class="section-heading">Live Preview</h3>
@@ -191,6 +195,16 @@
           <label for="streamUrl">Stream URL</label>
           <input type="text" id="streamUrl" value="{{ config.stream.url }}" inputmode="url" placeholder="rtmp://encoder.local/live/stream or YouTube live URL">
           <div class="help">Encoder stream (HLS, RTMP, SRT) or YouTube live URL (https://youtube.com/@channel/live)</div>
+        </div>
+
+        <div class="form-group">
+          <label for="backupUrl">Backup URL (optional)</label>
+          <input type="text" id="backupUrl" value="{{ config.stream.backup_url }}" inputmode="url" placeholder="Fallback stream if primary fails">
+          <div class="help">Auto-switches after 3 consecutive failures. Leave blank to disable failover.</div>
+        </div>
+
+        <div id="backupBanner" class="warning-box" style="display:none">
+          <p>Using backup stream. <button class="btn btn-sm btn-primary" onclick="switchBackPrimary()">Switch Back to Primary</button></p>
         </div>
 
         <div class="form-group">
@@ -214,9 +228,41 @@
             <div class="help">If playback fails, switch back to Auto</div>
             <div class="help">Pi 5: V4L2 only supports HEVC (H.265). Most streams are H.264 — use Auto instead.</div>
           </div>
+          <div class="form-group mt-12">
+            <label for="streamMaxRes">YouTube Max Quality</label>
+            <select id="streamMaxRes">
+              <option value="best" {% if config.stream.max_resolution == 'best' %}selected{% endif %}>Best Available</option>
+              <option value="2160" {% if config.stream.max_resolution == '2160' %}selected{% endif %}>4K (2160p)</option>
+              <option value="1440" {% if config.stream.max_resolution == '1440' %}selected{% endif %}>1440p</option>
+              <option value="1080" {% if config.stream.max_resolution == '1080' %}selected{% endif %}>1080p (default)</option>
+              <option value="720" {% if config.stream.max_resolution == '720' %}selected{% endif %}>720p</option>
+              <option value="480" {% if config.stream.max_resolution == '480' %}selected{% endif %}>480p</option>
+            </select>
+            <div class="help">Cap YouTube stream resolution. Lower = less buffering on slow networks. Only affects YouTube URLs.</div>
+          </div>
         </details>
 
         <button class="btn btn-primary" onclick="saveStreamConfig(this)">Apply &amp; Restart Video</button>
+
+        <div class="panel-card" style="margin-top:20px">
+          <h3 class="section-heading">Stream Presets</h3>
+          <div class="help" style="margin-bottom:12px">Save bookmarked stream URLs for quick switching. Tap a preset to switch instantly.</div>
+          <div id="presetList"></div>
+          <div class="form-row mt-12">
+            <div class="form-group">
+              <label for="presetLabel">Label</label>
+              <input type="text" id="presetLabel" placeholder="e.g. Main Campus" maxlength="50">
+            </div>
+            <div class="form-group">
+              <label for="presetUrl">URL</label>
+              <input type="text" id="presetUrl" placeholder="rtmp://... or YouTube URL" maxlength="500">
+            </div>
+          </div>
+          <div class="btn-group">
+            <button class="btn btn-secondary" onclick="addPreset()">Add Preset</button>
+            <button class="btn btn-secondary" onclick="saveCurrentAsPreset()">Save Current URL</button>
+          </div>
+        </div>
       </div>
 
       <!-- tab 2: Overlay -->
@@ -414,6 +460,8 @@
           </div>
 
 
+          <button class="btn btn-secondary mt-12" id="pingBtn" onclick="pingStreamHost(this)">Test Stream Host</button>
+          <div id="pingResult" class="help" style="display:none;margin-top:8px"></div>
         </div>
 
         <div class="panel-card">
@@ -594,10 +642,12 @@
             <div class="form-group">
               <label for="ethTimeout">Ethernet Wait (s)</label>
               <input type="number" id="ethTimeout" value="{{ config.network.ethernet_timeout }}" min="1" max="120">
+              <div class="help">Seconds to wait for Ethernet at boot before trying WiFi</div>
             </div>
             <div class="form-group">
               <label for="wifiTimeout">WiFi Wait (s)</label>
               <input type="number" id="wifiTimeout" value="{{ config.network.wifi_timeout }}" min="1" max="120">
+              <div class="help">Seconds to wait for WiFi before starting the hotspot</div>
             </div>
           </div>
 
@@ -622,6 +672,30 @@
         </div>
 
         <button class="btn btn-primary" onclick="saveDecoderName(this)">Save Name</button>
+
+        <h3 class="section-heading">HDMI Output</h3>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="hdmiResolution">Resolution</label>
+            <select id="hdmiResolution">
+              <option value="">Loading...</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="hdmiRefreshRate">Refresh Rate</label>
+            <select id="hdmiRefreshRate">
+              <option value="60">60 Hz</option>
+              <option value="50">50 Hz</option>
+              <option value="30">30 Hz</option>
+              <option value="24">24 Hz</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="help" style="margin-bottom:12px">Changes the HDMI output resolution in the kernel command line. Requires a reboot to take effect.</div>
+
+        <button class="btn btn-primary" onclick="saveHdmiResolution(this)">Apply HDMI Resolution</button>
 
         <h3 class="section-heading">Version</h3>
 
@@ -652,6 +726,7 @@
 
         <div class="log-toolbar">
           <button class="btn btn-secondary mr-8" onclick="refreshLogs()">Refresh</button>
+          <a href="/api/logs/download" class="btn btn-secondary mr-8" download>Download</a>
           <label class="toggle-row mb-0">
             <input type="checkbox" id="logAutoRefresh" onchange="toggleLogAutoRefresh()">
             Auto-refresh

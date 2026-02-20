@@ -34,6 +34,8 @@
       "setupBanner", "setupChecklist",
       "hostnameDisplay", "toastContainer", "hwdecCurrent",
       "mpvPerfLine", "mpvRes", "mpvFps", "mpvDrops",
+      "hdmiResolution", "hdmiRefreshRate",
+      "dashCountdown", "dashCountdownTimer", "dashCountdownLabel",
     ];
     ids.forEach(function (id) { _el[id] = document.getElementById(id); });
   }
@@ -152,10 +154,11 @@
       loadSavedNetworks();
       window.loadSpeedTestResult();
     }
-    // load logs + version when opening System tab (index 4)
+    // load logs + version + display modes when opening System tab (index 4)
     if (idx === 4) {
       loadLogs();
       loadVersion();
+      loadDisplayModes();
     }
   }
 
@@ -235,7 +238,14 @@
     // stat cards
     if (_el.statCpu) _el.statCpu.textContent = d.system.cpu_percent.toFixed(1) + "%";
     if (_el.statMem) _el.statMem.textContent = d.system.memory_percent.toFixed(1) + "%";
-    if (_el.statTemp) _el.statTemp.textContent = d.system.temperature.toFixed(1) + "\u00b0C";
+    if (_el.statTemp) {
+      _el.statTemp.textContent = d.system.temperature.toFixed(1) + "\u00b0C";
+      var tempCard = _el.statTemp.closest(".stat-card");
+      if (tempCard) {
+        tempCard.className = d.system.temperature > 75 ? "stat-card stat-card-danger" :
+          d.system.temperature > 65 ? "stat-card stat-card-warning" : "stat-card";
+      }
+    }
     if (_el.statUptime) _el.statUptime.textContent = d.system.uptime || "--";
 
     // network card on Dashboard
@@ -249,32 +259,46 @@
     if (d.cec) {
       var tvEl = _el.statTv;
       var tvCard = _el.tvStatusCard;
+      var cecAvail = d.cec.available !== false;
+      // Disable/enable CEC control buttons
+      document.querySelectorAll("[data-cec]").forEach(function (btn) {
+        btn.disabled = !cecAvail;
+        btn.classList.toggle("control-card-disabled", !cecAvail);
+      });
       if (tvEl) {
-        var ps = d.cec.power;
-        if (ps === "on") {
-          tvEl.textContent = "On";
+        if (!cecAvail) {
+          tvEl.textContent = "No CEC";
           if (tvCard) tvCard.className = "stat-card";
-        } else if (ps === "standby") {
-          tvEl.textContent = "Standby";
-          if (tvCard) tvCard.className = "stat-card stat-card-warning";
         } else {
-          tvEl.textContent = "Unknown";
-          if (tvCard) tvCard.className = "stat-card";
+          var ps = d.cec.power;
+          if (ps === "on") {
+            tvEl.textContent = "On";
+            if (tvCard) tvCard.className = "stat-card";
+          } else if (ps === "standby") {
+            tvEl.textContent = "Standby";
+            if (tvCard) tvCard.className = "stat-card stat-card-warning";
+          } else {
+            tvEl.textContent = "Unknown";
+            if (tvCard) tvCard.className = "stat-card";
+          }
         }
       }
     }
 
-    // mpv status
+    // mpv status (with accessible text labels)
     var mpvLine = _el.mpvStatusLine;
     if (mpvLine) {
       if (d.mpv.playing) {
         mpvLine.innerHTML =
-          '<span class="indicator green"></span>Playing: ' +
+          '<span class="indicator green" aria-hidden="true"></span>' +
+          '<span class="status-label">Playing</span>: ' +
           escapeHtml(d.mpv.stream_url || "--");
       } else if (d.mpv.idle) {
-        mpvLine.innerHTML = '<span class="indicator grey"></span>Idle';
+        mpvLine.innerHTML = '<span class="indicator grey" aria-hidden="true"></span>' +
+          '<span class="status-label">Idle</span>';
       } else {
-        mpvLine.innerHTML = '<span class="indicator red"></span>Stopped';
+        mpvLine.innerHTML = '<span class="indicator red" aria-hidden="true"></span>' +
+          '<span class="status-label">Stopped</span>';
       }
     }
 
@@ -295,6 +319,12 @@
     // hwdec current hint
     if (_el.hwdecCurrent && d.mpv) {
       _el.hwdecCurrent.textContent = d.mpv.hwdec_current || "--";
+    }
+
+    // Backup stream banner
+    var backupBanner = document.getElementById("backupBanner");
+    if (backupBanner) {
+      backupBanner.style.display = (d.mpv && d.mpv.using_backup) ? "block" : "none";
     }
 
     // setup banner (shown above tabs, dismissible)
@@ -319,21 +349,39 @@
       updateTabBadges();
     }
 
-    // overlay
+    // overlay (with accessible text labels)
     var ovLine = _el.overlayStatusLine;
     if (ovLine) {
       if (d.overlay && d.overlay.enabled) {
         var parts = ["PCO Enabled"];
+        if (d.overlay.pco_failures) parts.push("API errors (" + d.overlay.pco_failures + " failures)");
+        if (d.overlay.credential_error) parts.push(d.overlay.credential_error);
         if (d.overlay.is_live) parts.push("Live");
         if (d.overlay.countdown) {
           var suffix = d.overlay.timer_mode === "item" ? " to item end" : " to service end";
           parts.push(d.overlay.countdown + suffix);
         }
         if (d.overlay.message) parts.push(d.overlay.message);
+        var ovColor = (d.overlay.pco_failures || d.overlay.credential_error) ? "red" : "green";
         ovLine.innerHTML =
-          '<span class="indicator green"></span>' + escapeHtml(parts.join(" \u2014 "));
+          '<span class="indicator ' + ovColor + '" aria-hidden="true"></span>' +
+          '<span class="status-label">Enabled</span> \u2014 ' + escapeHtml(parts.join(" \u2014 "));
       } else {
-        ovLine.innerHTML = '<span class="indicator grey"></span>Disabled';
+        ovLine.innerHTML = '<span class="indicator grey" aria-hidden="true"></span>' +
+          '<span class="status-label">Disabled</span>';
+      }
+    }
+
+    // Dashboard countdown widget
+    if (_el.dashCountdown) {
+      if (d.overlay && d.overlay.enabled && d.overlay.countdown) {
+        _el.dashCountdown.style.display = "";
+        _el.dashCountdownTimer.textContent = d.overlay.countdown;
+        var label = d.overlay.plan_title || "";
+        if (d.overlay.item_title) label = d.overlay.item_title;
+        _el.dashCountdownLabel.textContent = label;
+      } else {
+        _el.dashCountdown.style.display = "none";
       }
     }
   }
@@ -391,11 +439,12 @@
     var bars = 4;
     var filled = signal > 75 ? 4 : signal > 50 ? 3 : signal > 25 ? 2 : 1;
     var color = signal > 66 ? "var(--color-success)" : signal > 33 ? "var(--color-warning)" : "var(--color-danger)";
-    var html = '<span class="signal-bars">';
+    var strength = signal > 75 ? "Excellent" : signal > 50 ? "Good" : signal > 25 ? "Fair" : "Weak";
+    var html = '<span class="signal-bars" role="img" aria-label="WiFi signal: ' + signal + '% (' + strength + ')">';
     for (var i = 0; i < bars; i++) {
       var h = 6 + i * 4;
       var fill = i < filled ? color : "var(--color-border)";
-      html += '<span class="signal-bar" style="height:' + h + 'px;background:' + fill + '"></span>';
+      html += '<span class="signal-bar" style="height:' + h + 'px;background:' + fill + '" aria-hidden="true"></span>';
     }
     html += '</span>';
     return html;
@@ -511,7 +560,9 @@
       toast("Buffer delay must be between 200 and 30000 ms", "error");
       return;
     }
-    withLoading(btn, apiPost("/api/config/stream", { url: url, network_caching: caching, hwdec: hwdec }).then(
+    var maxRes = document.getElementById("streamMaxRes").value;
+    var backupUrl = document.getElementById("backupUrl").value;
+    withLoading(btn, apiPost("/api/config/stream", { url: url, backup_url: backupUrl, network_caching: caching, hwdec: hwdec, max_resolution: maxRes }).then(
       function (d) {
         if (d.ok) {
           toast("Stream config saved");
@@ -519,6 +570,90 @@
         } else toast("Error saving", "error");
       }
     ));
+  };
+
+  window.switchBackPrimary = function () {
+    apiPost("/api/stream/switch-back").then(function (d) {
+      if (d.ok) toast("Switching back to primary stream...");
+      else toast(d.error || "Switch back failed", "error");
+    });
+  };
+
+  // ── stream presets ──────────────────────────────────────────────────
+
+  var _presets = [];
+
+  function loadPresets() {
+    apiGet("/api/stream/presets").then(function (d) {
+      _presets = d.presets || [];
+      renderPresets();
+    });
+  }
+
+  function renderPresets() {
+    var el = document.getElementById("presetList");
+    if (!el) return;
+    if (!_presets.length) {
+      el.innerHTML = '<div class="help">No presets saved yet.</div>';
+      return;
+    }
+    var html = '<div class="preset-grid">';
+    _presets.forEach(function (p, i) {
+      html += '<div class="preset-item">' +
+        '<button class="btn btn-sm btn-primary preset-switch" onclick="switchPreset(' + i + ')">' +
+        escapeHtml(p.label) + '</button>' +
+        '<span class="preset-url">' + escapeHtml(p.url.substring(0, 60)) + '</span>' +
+        '<button class="btn btn-sm btn-danger" onclick="removePreset(' + i + ')">&times;</button>' +
+        '</div>';
+    });
+    html += '</div>';
+    el.innerHTML = html;
+  }
+
+  window.switchPreset = function (idx) {
+    var p = _presets[idx];
+    if (!p) return;
+    showConfirm("Switch to '" + p.label + "'?", "Switch").then(function (ok) {
+      if (ok) {
+        apiPost("/api/stream/switch", { url: p.url }).then(function (d) {
+          if (d.ok) {
+            toast("Switched to " + p.label);
+            document.getElementById("streamUrl").value = p.url;
+          } else toast(d.error || "Switch failed", "error");
+        });
+      }
+    });
+  };
+
+  window.addPreset = function () {
+    var label = document.getElementById("presetLabel").value.trim();
+    var url = document.getElementById("presetUrl").value.trim();
+    if (!label || !url) { toast("Both label and URL are required", "error"); return; }
+    if (_presets.length >= 10) { toast("Maximum 10 presets", "error"); return; }
+    _presets.push({ label: label, url: url });
+    apiPost("/api/stream/presets", { presets: _presets }).then(function (d) {
+      if (d.ok) {
+        toast("Preset added");
+        document.getElementById("presetLabel").value = "";
+        document.getElementById("presetUrl").value = "";
+        renderPresets();
+      } else toast(d.error || "Failed to save", "error");
+    });
+  };
+
+  window.saveCurrentAsPreset = function () {
+    var url = document.getElementById("streamUrl").value.trim();
+    if (!url) { toast("No stream URL to save", "error"); return; }
+    document.getElementById("presetUrl").value = url;
+    document.getElementById("presetLabel").focus();
+  };
+
+  window.removePreset = function (idx) {
+    _presets.splice(idx, 1);
+    apiPost("/api/stream/presets", { presets: _presets }).then(function (d) {
+      if (d.ok) { toast("Preset removed"); renderPresets(); }
+      else toast(d.error || "Failed to save", "error");
+    });
   };
 
   // ── overlay config ────────────────────────────────────────────────
@@ -529,6 +664,22 @@
     if (!isNaN(pollVal) && (pollVal < 5 || pollVal > 300)) {
       toast("Poll interval must be between 5 and 300 seconds", "error");
       return;
+    }
+    var fontSize = parseInt(document.getElementById("overlayFontSize").value, 10);
+    if (isNaN(fontSize) || fontSize < 20 || fontSize > 200) {
+      toast("Countdown size must be between 20 and 200", "error"); return;
+    }
+    var fontSizeTitle = parseInt(document.getElementById("overlayFontSizeTitle").value, 10);
+    if (isNaN(fontSizeTitle) || fontSizeTitle < 10 || fontSizeTitle > 100) {
+      toast("Title size must be between 10 and 100", "error"); return;
+    }
+    var fontSizeInfo = parseInt(document.getElementById("overlayFontSizeInfo").value, 10);
+    if (isNaN(fontSizeInfo) || fontSizeInfo < 10 || fontSizeInfo > 80) {
+      toast("Info size must be between 10 and 80", "error"); return;
+    }
+    var transparency = parseFloat(document.getElementById("overlayTransparency").value);
+    if (isNaN(transparency) || transparency < 0 || transparency > 1) {
+      toast("Opacity must be between 0 and 1", "error"); return;
     }
     // Save overlay + advanced PCO settings together
     var overlayPromise = apiPost("/api/config/overlay", {
@@ -727,8 +878,10 @@
     });
   };
   window.stopVideo = function () {
-    apiPost("/api/stop/video").then(function (d) {
-      if (d.ok) toast("Video stopped");
+    showConfirm("Stop video playback?", "Stop").then(function (ok) {
+      if (ok) apiPost("/api/stop/video").then(function (d) {
+        if (d.ok) toast("Video stopped");
+      });
     });
   };
 
@@ -807,6 +960,83 @@
       setText("currentVersion", d.version || "unknown");
     });
   }
+
+  // ── HDMI display modes ─────────────────────────────────────────────
+
+  var _displayModesLoaded = false;
+
+  function loadDisplayModes() {
+    if (_displayModesLoaded) return;
+    apiGet("/api/display/modes").then(function (d) {
+      var sel = _el.hdmiResolution;
+      if (!sel) return;
+      var modes = d.modes || [];
+      var current = d.current || "";
+
+      // Parse current resolution and refresh rate
+      var curRes = "";
+      var curRate = "60";
+      if (current) {
+        var atIdx = current.indexOf("@");
+        if (atIdx >= 0) {
+          curRes = current.substring(0, atIdx);
+          curRate = current.substring(atIdx + 1).replace("D", "");
+        } else {
+          curRes = current;
+        }
+      }
+
+      sel.innerHTML = "";
+      if (!modes.length) modes = ["1920x1080", "1280x720", "720x480"];
+      modes.forEach(function (m) {
+        var opt = document.createElement("option");
+        opt.value = m;
+        opt.textContent = m;
+        if (m === curRes) opt.selected = true;
+        sel.appendChild(opt);
+      });
+
+      // Set refresh rate dropdown
+      var rateSel = _el.hdmiRefreshRate;
+      if (rateSel && curRate) {
+        for (var i = 0; i < rateSel.options.length; i++) {
+          if (rateSel.options[i].value === curRate) {
+            rateSel.selectedIndex = i;
+            break;
+          }
+        }
+      }
+
+      _displayModesLoaded = true;
+    }).catch(function () {});
+  }
+
+  window.saveHdmiResolution = function (btn) {
+    var resSel = _el.hdmiResolution;
+    var rateSel = _el.hdmiRefreshRate;
+    if (!resSel || !rateSel) return;
+    var res = resSel.value;
+    var rate = rateSel.value;
+    var combined = res + "@" + rate + "D";
+
+    showConfirm("Set HDMI output to " + res + " @ " + rate + "Hz? Requires reboot.", "Apply").then(function (ok) {
+      if (!ok) return;
+      withLoading(btn, apiPost("/api/display/resolution", { resolution: combined }).then(function (d) {
+        if (d.ok) {
+          toast("HDMI resolution set to " + combined);
+          showConfirm("Reboot now to apply the new resolution?", "Reboot").then(function (reboot) {
+            if (reboot) {
+              apiPost("/api/reboot").then(function () {
+                toast("Rebooting...");
+              });
+            }
+          });
+        } else {
+          toast(d.error || "Failed to set resolution", "error");
+        }
+      }));
+    });
+  };
 
   // ── config import ──────────────────────────────────────────────────
 
@@ -970,15 +1200,33 @@
       toast("Hotspot password must be at least 8 characters", "error");
       return;
     }
-    withLoading(btn, apiPost("/api/config/network", {
-      hotspot_ssid: document.getElementById("hotspotSsid").value,
-      hotspot_password: document.getElementById("hotspotPassword").value,
-      ethernet_timeout: parseInt(document.getElementById("ethTimeout").value, 10),
-      wifi_timeout: parseInt(document.getElementById("wifiTimeout").value, 10),
-    }).then(function (d) {
-      if (d.ok) toast("Network settings saved");
-      else toast(d.error || "Error saving", "error");
-    }));
+    var ethT = parseInt(document.getElementById("ethTimeout").value, 10);
+    if (isNaN(ethT) || ethT < 1 || ethT > 120) {
+      toast("Ethernet wait must be between 1 and 120 seconds", "error"); return;
+    }
+    var wifiT = parseInt(document.getElementById("wifiTimeout").value, 10);
+    if (isNaN(wifiT) || wifiT < 1 || wifiT > 120) {
+      toast("WiFi wait must be between 1 and 120 seconds", "error"); return;
+    }
+    function doSave() {
+      withLoading(btn, apiPost("/api/config/network", {
+        hotspot_ssid: document.getElementById("hotspotSsid").value,
+        hotspot_password: document.getElementById("hotspotPassword").value,
+        ethernet_timeout: parseInt(document.getElementById("ethTimeout").value, 10),
+        wifi_timeout: parseInt(document.getElementById("wifiTimeout").value, 10),
+      }).then(function (d) {
+        if (d.ok) toast("Network settings saved");
+        else toast(d.error || "Error saving", "error");
+      }));
+    }
+    // Warn if connected via hotspot — changing SSID/password may disconnect
+    if (_hotspotActive) {
+      showConfirm("You are connected via hotspot. Changing these settings may disconnect you. Continue?", "Save").then(function (ok) {
+        if (ok) doSave();
+      });
+    } else {
+      doSave();
+    }
   };
 
   // ── static IP configuration ──────────────────────────────────────
@@ -1146,6 +1394,26 @@
       .replace(/'/g, "&#39;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
 
+  // ── network diagnostics ───────────────────────────────────────────
+
+  window.pingStreamHost = function (btn) {
+    var out = document.getElementById("pingResult");
+    withLoading(btn, apiPost("/api/network/ping", {}).then(function (d) {
+      if (!out) return;
+      out.style.display = "block";
+      if (d.ok) {
+        if (d.reachable) {
+          out.innerHTML = '<span style="color:var(--color-success)">' + escapeHtml(d.host) + ' reachable</span>' +
+            (d.avg_ms != null ? ' \u2014 ' + d.avg_ms.toFixed(1) + ' ms avg' : '');
+        } else {
+          out.innerHTML = '<span style="color:var(--color-danger)">' + escapeHtml(d.host) + ' unreachable</span>';
+        }
+      } else {
+        out.innerHTML = '<span style="color:var(--color-danger)">' + escapeHtml(d.error || "Test failed") + '</span>';
+      }
+    }));
+  };
+
   // ── speed test ──────────────────────────────────────────────────
 
   function relativeTime(isoStr) {
@@ -1261,6 +1529,8 @@
     connectStatus();
     // try loading service types on page load
     window.loadServiceTypes();
+    // load stream presets
+    loadPresets();
     // initialize search mode toggle
     window.toggleSearchMode();
     // caching help

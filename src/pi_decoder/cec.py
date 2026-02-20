@@ -4,11 +4,25 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shutil
 import time
 
 log = logging.getLogger(__name__)
 
 _TIMEOUT = 10  # seconds — CEC bus init takes 2-3s
+
+# Cached availability (checked once at startup, refreshed on demand)
+_cec_available: bool | None = None
+
+
+def is_available() -> bool:
+    """Check if cec-client binary is on PATH."""
+    global _cec_available
+    if _cec_available is None:
+        _cec_available = shutil.which("cec-client") is not None
+        if not _cec_available:
+            log.info("cec-client not found — CEC controls will be disabled")
+    return _cec_available
 
 # Cached power status to avoid spawning cec-client every 2s per WS client.
 _power_cache: str = "unknown"

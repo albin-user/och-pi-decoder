@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import io
 import logging
 import os
@@ -161,6 +162,8 @@ def _build_overlay_info(config: Config, overlay: OverlayUpdater | None, pco: PCO
         info["message"] = st.message
     if pco and pco.credential_error:
         info["credential_error"] = pco.credential_error
+    if pco and pco.consecutive_failures >= 5:
+        info["pco_failures"] = pco.consecutive_failures
     return info
 
 
@@ -172,6 +175,7 @@ def create_app(
     config_path: str = "/etc/pi-decoder/config.toml",
 ) -> FastAPI:
     app = FastAPI(title="Pi-Decoder", docs_url=None, redoc_url=None)
+    _config_lock = asyncio.Lock()
 
     # Captive portal middleware (redirects phone connectivity checks to web UI)
     app.add_middleware(CaptivePortalMiddleware, config=config)
@@ -212,10 +216,11 @@ def create_app(
     @app.post("/api/config/general")
     async def api_config_general(request: Request):
         data = await request.json()
-        if "name" in data:
-            config.general.name = str(data["name"]).strip() or "Pi-Decoder"
-        validate_config(config)
-        save_config(config, config_path)
+        async with _config_lock:
+            if "name" in data:
+                config.general.name = str(data["name"]).strip() or "Pi-Decoder"
+            validate_config(config)
+            save_config(config, config_path)
         log.info("Config updated: general name changed to %s", config.general.name)
         # Sync system hostname with decoder name
         from pi_decoder.hostname import set_hostname
@@ -223,62 +228,115 @@ def create_app(
         return {"ok": True, "hostname": hostname}
 
     ALLOWED_HWDEC = {"auto", "auto-safe", "v4l2m2m", "no"}
+    ALLOWED_MAX_RESOLUTION = {"best", "2160", "1440", "1080", "720", "480"}
 
     @app.post("/api/config/stream")
     async def api_config_stream(request: Request):
         data = await request.json()
-        config.stream.url = data.get("url", config.stream.url)
-        config.stream.network_caching = int(data.get("network_caching", config.stream.network_caching))
         if "hwdec" in data:
             hwdec = str(data["hwdec"]).strip()
-            if hwdec in ALLOWED_HWDEC:
-                config.stream.hwdec = hwdec
-            else:
+            if hwdec not in ALLOWED_HWDEC:
                 return JSONResponse({"ok": False, "error": f"Invalid hwdec value: {hwdec}"}, 400)
-        validate_config(config)
-        save_config(config, config_path)
+        if "max_resolution" in data:
+            max_res = str(data["max_resolution"]).strip()
+            if max_res not in ALLOWED_MAX_RESOLUTION:
+                return JSONResponse({"ok": False, "error": f"Invalid max_resolution value: {max_res}"}, 400)
+        async with _config_lock:
+            config.stream.url = data.get("url", config.stream.url)
+            if "backup_url" in data:
+                config.stream.backup_url = str(data["backup_url"]).strip()
+            config.stream.network_caching = int(data.get("network_caching", config.stream.network_caching))
+            if "hwdec" in data:
+                config.stream.hwdec = str(data["hwdec"]).strip()
+            if "max_resolution" in data:
+                config.stream.max_resolution = str(data["max_resolution"]).strip()
+            validate_config(config)
+            save_config(config, config_path)
         log.info("Config updated: stream URL changed to %s", config.stream.url[:50])
         # Reset retry backoff when URL changes so it tries immediately
         mpv.reset_stream_retry()
         return {"ok": True}
 
+    @app.get("/api/stream/presets")
+    async def api_stream_presets():
+        return {"presets": config.stream.presets}
+
+    @app.post("/api/stream/presets")
+    async def api_stream_presets_save(request: Request):
+        data = await request.json()
+        presets = data.get("presets", [])
+        if not isinstance(presets, list) or len(presets) > 10:
+            return JSONResponse({"ok": False, "error": "Max 10 presets"}, 400)
+        cleaned = []
+        for p in presets:
+            label = str(p.get("label", "")).strip()
+            url = str(p.get("url", "")).strip()
+            if label and url:
+                cleaned.append({"label": label[:50], "url": url[:500]})
+        async with _config_lock:
+            config.stream.presets = cleaned
+            validate_config(config)
+            save_config(config, config_path)
+        return {"ok": True}
+
+    @app.post("/api/stream/switch")
+    async def api_stream_switch(request: Request):
+        """Quick-switch to a preset stream URL."""
+        data = await request.json()
+        url = str(data.get("url", "")).strip()
+        if not url:
+            return JSONResponse({"ok": False, "error": "URL required"}, 400)
+        async with _config_lock:
+            config.stream.url = url
+            validate_config(config)
+            save_config(config, config_path)
+        mpv.reset_stream_retry()
+        try:
+            await mpv.restart()
+        except Exception as e:
+            log.error("Video restart failed after stream switch: %s", e)
+            return JSONResponse({"ok": False, "error": f"Stream switched but restart failed: {e}"}, 500)
+        return {"ok": True}
+
     @app.post("/api/config/overlay")
     async def api_config_overlay(request: Request):
         data = await request.json()
-        config.overlay.enabled = data.get("enabled", config.overlay.enabled)
-        config.overlay.position = data.get("position", config.overlay.position)
-        config.overlay.font_size = int(data.get("font_size", config.overlay.font_size))
-        config.overlay.font_size_title = int(data.get("font_size_title", config.overlay.font_size_title))
-        config.overlay.font_size_info = int(data.get("font_size_info", config.overlay.font_size_info))
-        config.overlay.transparency = float(data.get("transparency", config.overlay.transparency))
-        config.overlay.timer_mode = data.get("timer_mode", config.overlay.timer_mode)
-        config.overlay.show_description = data.get("show_description", config.overlay.show_description)
-        config.overlay.show_service_end = data.get("show_service_end", config.overlay.show_service_end)
-        config.overlay.timezone = data.get("timezone", config.overlay.timezone)
-        validate_config(config)
-        save_config(config, config_path)
+        async with _config_lock:
+            config.overlay.enabled = data.get("enabled", config.overlay.enabled)
+            config.overlay.position = data.get("position", config.overlay.position)
+            config.overlay.font_size = int(data.get("font_size", config.overlay.font_size))
+            config.overlay.font_size_title = int(data.get("font_size_title", config.overlay.font_size_title))
+            config.overlay.font_size_info = int(data.get("font_size_info", config.overlay.font_size_info))
+            config.overlay.transparency = float(data.get("transparency", config.overlay.transparency))
+            config.overlay.timer_mode = data.get("timer_mode", config.overlay.timer_mode)
+            config.overlay.show_description = data.get("show_description", config.overlay.show_description)
+            config.overlay.show_service_end = data.get("show_service_end", config.overlay.show_service_end)
+            config.overlay.timezone = data.get("timezone", config.overlay.timezone)
+            validate_config(config)
+            save_config(config, config_path)
         log.info("Config updated: overlay settings changed")
         return {"ok": True}
 
     @app.post("/api/config/pco")
     async def api_config_pco(request: Request):
         data = await request.json()
-        if data.get("app_id"):
-            config.pco.app_id = data["app_id"]
-        if data.get("secret"):
-            config.pco.secret = data["secret"]
-        if data.get("service_type_id"):
-            config.pco.service_type_id = data["service_type_id"]
-        if "folder_id" in data:
-            config.pco.folder_id = str(data["folder_id"])
-        if "search_mode" in data:
-            mode = str(data["search_mode"])
-            if mode in ("service_type", "folder"):
-                config.pco.search_mode = mode
-        if "poll_interval" in data:
-            config.pco.poll_interval = max(2, min(60, int(data["poll_interval"])))
-        validate_config(config)
-        save_config(config, config_path)
+        async with _config_lock:
+            if data.get("app_id"):
+                config.pco.app_id = data["app_id"]
+            if data.get("secret"):
+                config.pco.secret = data["secret"]
+            if data.get("service_type_id"):
+                config.pco.service_type_id = data["service_type_id"]
+            if "folder_id" in data:
+                config.pco.folder_id = str(data["folder_id"])
+            if "search_mode" in data:
+                mode = str(data["search_mode"])
+                if mode in ("service_type", "folder"):
+                    config.pco.search_mode = mode
+            if "poll_interval" in data:
+                config.pco.poll_interval = max(2, min(60, int(data["poll_interval"])))
+            validate_config(config)
+            save_config(config, config_path)
         # update PCO client credentials
         if pco:
             pco.update_credentials(
@@ -343,6 +401,64 @@ def create_app(
         except Exception as e:
             return JSONResponse({"ok": False, "error": f"Log fetch failed: {e}"}, 500)
 
+    @app.post("/api/network/ping")
+    async def api_network_ping(request: Request):
+        """Ping a host and report latency. Used for stream host diagnostics."""
+        data = await request.json()
+        host = str(data.get("host", "")).strip()
+        if not host:
+            # Extract host from current stream URL
+            from urllib.parse import urlparse
+            parsed = urlparse(config.stream.url)
+            host = parsed.hostname or ""
+        if not host:
+            return JSONResponse({"ok": False, "error": "No host to test"}, 400)
+        # Sanitize: only allow hostname-like strings
+        import re as _re
+        if not _re.match(r'^[a-zA-Z0-9._-]+$', host):
+            return JSONResponse({"ok": False, "error": "Invalid hostname"}, 400)
+        try:
+            result = subprocess.run(
+                ["ping", "-c", "3", "-W", "3", host],
+                capture_output=True, text=True, timeout=15,
+            )
+            output = result.stdout
+            # Parse avg latency from ping output
+            import re
+            m = re.search(r'= [\d.]+/([\d.]+)/', output)
+            avg_ms = float(m.group(1)) if m else None
+            return {
+                "ok": True,
+                "host": host,
+                "reachable": result.returncode == 0,
+                "avg_ms": avg_ms,
+                "output": output[-500:],
+            }
+        except subprocess.TimeoutExpired:
+            return {"ok": True, "host": host, "reachable": False, "avg_ms": None, "output": "Ping timed out"}
+        except Exception as e:
+            return JSONResponse({"ok": False, "error": f"Ping failed: {e}"}, 500)
+
+    @app.get("/api/logs/download")
+    async def api_logs_download(service: str = "pi-decoder", lines: int = 500):
+        if service not in ALLOWED_LOG_SERVICES:
+            return JSONResponse({"error": "Invalid service"}, status_code=400)
+        lines = min(lines, 5000)
+        try:
+            result = subprocess.run(
+                ["journalctl", "-u", service, "-n", str(lines), "--no-pager"],
+                capture_output=True, text=True, timeout=10,
+            )
+            hostname = socket.gethostname()
+            filename = f"{hostname}-{service}-logs.txt"
+            return Response(
+                content=result.stdout,
+                media_type="text/plain",
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            )
+        except Exception as e:
+            return JSONResponse({"ok": False, "error": f"Log export failed: {e}"}, 500)
+
     @app.post("/api/stop/video")
     async def api_stop_video():
         await mpv.stop_stream()
@@ -350,7 +466,22 @@ def create_app(
 
     @app.post("/api/restart/video")
     async def api_restart_video():
-        asyncio.create_task(mpv.restart())
+        try:
+            await mpv.restart()
+        except Exception as e:
+            log.error("Video restart failed: %s", e)
+            return JSONResponse({"ok": False, "error": f"Video restart failed: {e}"}, 500)
+        return {"ok": True}
+
+    @app.post("/api/stream/switch-back")
+    async def api_stream_switch_back():
+        """Switch back from backup to primary stream URL."""
+        mpv.reset_stream_retry()
+        try:
+            await mpv.restart()
+        except Exception as e:
+            log.error("Switch back failed: %s", e)
+            return JSONResponse({"ok": False, "error": f"Switch back failed: {e}"}, 500)
         return {"ok": True}
 
     @app.post("/api/restart/overlay")
@@ -364,7 +495,11 @@ def create_app(
     async def api_restart_all():
         if overlay:
             await overlay.stop()
-        asyncio.create_task(mpv.restart())
+        try:
+            await mpv.restart()
+        except Exception as e:
+            log.error("Video restart failed during restart-all: %s", e)
+            return JSONResponse({"ok": False, "error": f"Video restart failed: {e}"}, 500)
         if overlay:
             # restart overlay after mpv is back
             async def _restart_overlay():
@@ -425,26 +560,51 @@ def create_app(
             raw = tomllib.loads(content.decode("utf-8"))
         except Exception as e:
             return JSONResponse({"ok": False, "error": f"Invalid TOML: {e}"}, 400)
-        # Merge imported config (skip secrets — they stay as-is)
+        # Validate imported config in a separate object before replacing live config
         from pi_decoder.config import _apply_dict
-        if "general" in raw:
-            _apply_dict(config.general, raw["general"])
-        if "stream" in raw:
-            _apply_dict(config.stream, raw["stream"])
-        if "overlay" in raw:
-            _apply_dict(config.overlay, raw["overlay"])
-        if "pco" in raw:
-            # Preserve existing secret if not in import
-            pco_data = raw["pco"]
-            if "secret" not in pco_data:
-                pco_data["secret"] = config.pco.secret
-            _apply_dict(config.pco, pco_data)
-        if "web" in raw:
-            _apply_dict(config.web, raw["web"])
-        if "network" in raw:
-            _apply_dict(config.network, raw["network"])
-        validate_config(config)
-        save_config(config, config_path)
+        trial = copy.deepcopy(config)
+        try:
+            if "general" in raw:
+                _apply_dict(trial.general, raw["general"])
+            if "stream" in raw:
+                _apply_dict(trial.stream, raw["stream"])
+            if "overlay" in raw:
+                _apply_dict(trial.overlay, raw["overlay"])
+            if "pco" in raw:
+                pco_data = dict(raw["pco"])
+                if "secret" not in pco_data:
+                    pco_data["secret"] = trial.pco.secret
+                _apply_dict(trial.pco, pco_data)
+            if "web" in raw:
+                _apply_dict(trial.web, raw["web"])
+            if "network" in raw:
+                _apply_dict(trial.network, raw["network"])
+            if "display" in raw:
+                _apply_dict(trial.display, raw["display"])
+            validate_config(trial)
+        except Exception as e:
+            return JSONResponse({"ok": False, "error": f"Imported config invalid: {e}"}, 400)
+        # Trial passed — apply to live config under lock
+        async with _config_lock:
+            if "general" in raw:
+                _apply_dict(config.general, raw["general"])
+            if "stream" in raw:
+                _apply_dict(config.stream, raw["stream"])
+            if "overlay" in raw:
+                _apply_dict(config.overlay, raw["overlay"])
+            if "pco" in raw:
+                pco_data = dict(raw["pco"])
+                if "secret" not in pco_data:
+                    pco_data["secret"] = config.pco.secret
+                _apply_dict(config.pco, pco_data)
+            if "web" in raw:
+                _apply_dict(config.web, raw["web"])
+            if "network" in raw:
+                _apply_dict(config.network, raw["network"])
+            if "display" in raw:
+                _apply_dict(config.display, raw["display"])
+            validate_config(config)
+            save_config(config, config_path)
         return {"ok": True, "message": "Config imported successfully"}
 
     # ── Network management ─────────────────────────────────────────
@@ -536,22 +696,23 @@ def create_app(
     @app.post("/api/config/network")
     async def api_config_network(request: Request):
         data = await request.json()
-        if "hotspot_ssid" in data:
-            config.network.hotspot_ssid = str(data["hotspot_ssid"])
-        if "hotspot_password" in data:
-            config.network.hotspot_password = str(data["hotspot_password"])
-        if "ethernet_timeout" in data:
-            config.network.ethernet_timeout = int(data["ethernet_timeout"])
-        if "wifi_timeout" in data:
-            config.network.wifi_timeout = int(data["wifi_timeout"])
-        # Static IP fields (eth_ and wifi_ prefixes)
-        for prefix in ("eth", "wifi"):
-            for suffix in ("ip_mode", "ip_address", "gateway", "dns"):
-                key = f"{prefix}_{suffix}"
-                if key in data:
-                    setattr(config.network, key, str(data[key]))
-        validate_config(config)
-        save_config(config, config_path)
+        async with _config_lock:
+            if "hotspot_ssid" in data:
+                config.network.hotspot_ssid = str(data["hotspot_ssid"])
+            if "hotspot_password" in data:
+                config.network.hotspot_password = str(data["hotspot_password"])
+            if "ethernet_timeout" in data:
+                config.network.ethernet_timeout = int(data["ethernet_timeout"])
+            if "wifi_timeout" in data:
+                config.network.wifi_timeout = int(data["wifi_timeout"])
+            # Static IP fields (eth_ and wifi_ prefixes)
+            for prefix in ("eth", "wifi"):
+                for suffix in ("ip_mode", "ip_address", "gateway", "dns"):
+                    key = f"{prefix}_{suffix}"
+                    if key in data:
+                        setattr(config.network, key, str(data[key]))
+            validate_config(config)
+            save_config(config, config_path)
         log.info("Config updated: network settings changed")
         return {"ok": True}
 
@@ -672,6 +833,44 @@ def create_app(
             return JSONResponse({"ok": False, "error": f"CEC mute failed: {e}"}, 500)
         return {"ok": True}
 
+    # ── Display / HDMI resolution ─────────────────────────────────────
+
+    @app.get("/api/display/modes")
+    async def api_display_modes():
+        from pi_decoder.display import get_available_modes, get_current_resolution
+        modes = get_available_modes()
+        current = get_current_resolution()
+        return {"modes": modes, "current": current}
+
+    @app.post("/api/display/resolution")
+    async def api_display_resolution(request: Request):
+        import re as _re
+        data = await request.json()
+        resolution = str(data.get("resolution", "")).strip()
+        if not resolution:
+            return JSONResponse({"ok": False, "error": "Resolution is required"}, 400)
+        # Tightened validation: check ranges and known refresh rates
+        _valid_rates = {24, 25, 30, 50, 60, 120}
+        _m = _re.match(r'^(\d+)x(\d+)(?:@(\d+)(D)?)?$', resolution)
+        if not _m:
+            return JSONResponse({"ok": False, "error": f"Invalid resolution format: {resolution}"}, 400)
+        _w, _h = int(_m.group(1)), int(_m.group(2))
+        _rate = int(_m.group(3)) if _m.group(3) else 60
+        if not (320 <= _w <= 7680 and 240 <= _h <= 4320):
+            return JSONResponse({"ok": False, "error": f"Resolution out of range: {_w}x{_h}"}, 400)
+        if _rate not in _valid_rates:
+            return JSONResponse({"ok": False, "error": f"Unsupported refresh rate: {_rate}Hz"}, 400)
+        from pi_decoder.display import set_display_resolution
+        try:
+            await set_display_resolution(resolution)
+        except Exception as e:
+            return JSONResponse({"ok": False, "error": f"Failed to set resolution: {e}"}, 500)
+        async with _config_lock:
+            config.display.hdmi_resolution = resolution
+            validate_config(config)
+            save_config(config, config_path)
+        return {"ok": True, "message": f"HDMI resolution set to {resolution}. Reboot to apply."}
+
     # ── WebSocket: status ────────────────────────────────────────────
 
     @app.websocket("/ws/status")
@@ -692,13 +891,15 @@ def create_app(
                 network_info.pop("hotspot_password", None)
                 network_info["hotspot_ssid"] = config.network.hotspot_ssid
 
-                # CEC power status (best effort, don't block on failure)
+                # CEC availability and power status
+                from pi_decoder import cec
+                cec_avail = cec.is_available()
                 cec_status = "unknown"
-                try:
-                    from pi_decoder import cec
-                    cec_status = await asyncio.wait_for(cec.get_power_status(), timeout=3)
-                except Exception:
-                    pass
+                if cec_avail:
+                    try:
+                        cec_status = await asyncio.wait_for(cec.get_power_status(), timeout=3)
+                    except Exception:
+                        pass
 
                 await ws.send_json({
                     "name": config.general.name,
@@ -707,7 +908,7 @@ def create_app(
                     "overlay": overlay_info,
                     "system": _system_info(),
                     "network": network_info,
-                    "cec": {"power": cec_status},
+                    "cec": {"available": cec_avail, "power": cec_status},
                 })
                 await asyncio.sleep(2)
         except WebSocketDisconnect:

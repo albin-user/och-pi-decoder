@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 
@@ -39,6 +40,10 @@ _PAST_PLAN_MAX_AGE = 43200  # 12 hours
 
 # How often to do a full scan while tracking (seconds)
 _TRACKING_FULL_SCAN_INTERVAL = 60
+
+# Circuit breaker constants
+_CB_THRESHOLD = 5       # consecutive failures before backing off
+_CB_MAX_BACKOFF = 300   # max backoff in seconds (5 min)
 
 
 @dataclass
@@ -80,6 +85,9 @@ class PCOClient:
         self._last_full_scan: float = 0
         self._credential_error: str = ""  # non-empty = stop polling
         self._lock = asyncio.Lock()
+        # Circuit breaker: exponential backoff after consecutive failures
+        self._consecutive_failures: int = 0
+        self._backoff_until: float = 0.0  # monotonic time
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
@@ -112,6 +120,8 @@ class PCOClient:
         self._locked_live_start_at = None
         self._seen_active_item = False
         self._credential_error = ""
+        self._consecutive_failures = 0
+        self._backoff_until = 0.0
         # force new client on next request; schedule close of old one
         if self._client and not self._client.is_closed:
             old = self._client
@@ -159,6 +169,9 @@ class PCOClient:
         which item is currently live, when it started, and accurate
         countdown timers.  When no Live session is active, it falls back
         to showing the next upcoming plan with a "starts in" message.
+
+        Circuit breaker: after _CB_THRESHOLD consecutive failures, backs off
+        exponentially (up to _CB_MAX_BACKOFF seconds) before retrying.
         """
         if self._search_mode == "folder" and not self._folder_id:
             status = LiveStatus(message="No folder ID configured")
@@ -169,10 +182,16 @@ class PCOClient:
             self._cached_status = status
             return status
 
+        # Circuit breaker: skip poll if backing off
+        now = time.monotonic()
+        if self._consecutive_failures >= _CB_THRESHOLD and now < self._backoff_until:
+            return self._cached_status
+
         try:
             status = await self._fetch_live_status()
             self._cached_status = status
             self._credential_error = ""  # clear on success
+            self._consecutive_failures = 0
             return status
         except httpx.HTTPStatusError as e:
             if e.response.status_code in (401, 403):
@@ -181,21 +200,40 @@ class PCOClient:
                 status = LiveStatus(message=self._credential_error)
                 self._cached_status = status
                 return status
+            self._record_failure()
             log.warning("PCO API error (%s): %s", e.response.status_code, e)
             return self._cached_status
         except httpx.TimeoutException as e:
+            self._record_failure()
             log.warning("PCO API timeout: %s", e)
             return self._cached_status
         except (KeyError, ValueError, TypeError) as e:
+            self._record_failure()
             log.warning("PCO response parse error: %s", e)
             return self._cached_status
         except Exception:
+            self._record_failure()
             log.exception("PCO unexpected error — returning cached status")
             return self._cached_status
+
+    def _record_failure(self) -> None:
+        """Increment failure counter and set backoff deadline."""
+        self._consecutive_failures += 1
+        if self._consecutive_failures >= _CB_THRESHOLD:
+            backoff = min(2 ** (self._consecutive_failures - _CB_THRESHOLD), _CB_MAX_BACKOFF)
+            self._backoff_until = time.monotonic() + backoff
+            log.warning(
+                "PCO circuit breaker: %d consecutive failures, backing off %ds",
+                self._consecutive_failures, backoff,
+            )
 
     @property
     def credential_error(self) -> str:
         return self._credential_error
+
+    @property
+    def consecutive_failures(self) -> int:
+        return self._consecutive_failures
 
     @property
     def cached_status(self) -> LiveStatus:
@@ -233,7 +271,6 @@ class PCOClient:
             status = await self._poll_live(self._locked_plan_id, self._locked_st_id)
             if status.is_live or status.finished:
                 # Periodic full scan to catch abandoned-session takeover
-                import time
                 now = time.time()
                 if now - self._last_full_scan >= _TRACKING_FULL_SCAN_INTERVAL:
                     self._last_full_scan = now
@@ -361,7 +398,6 @@ class PCOClient:
             if status.is_live or status.finished:
                 self._locked_plan_id = plan_id
                 self._locked_st_id = st_id
-                import time
                 self._last_full_scan = time.time()
                 log.info("Locked onto live plan %s (st=%s), service_start=%s",
                          plan_id, st_id, service_start)

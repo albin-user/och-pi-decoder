@@ -18,6 +18,7 @@ log = logging.getLogger(__name__)
 IPC_SOCKET = "/tmp/mpv-pi-decoder.sock"
 SCREENSHOT_PATH = "/tmp/mpv-preview.jpg"
 IP_OVERLAY_ID = 63
+_FAILOVER_THRESHOLD = 3  # consecutive idle checks before switching to backup URL
 
 
 def _find_drm_device() -> str | None:
@@ -73,11 +74,28 @@ class MpvManager:
         self._last_stream_attempt = 0.0
         self._last_connection_type = ""  # Track for auto-retry on network change
         self._stderr_task: asyncio.Task | None = None
+        self._lifecycle_lock = asyncio.Lock()
+        self._ipc_lock = asyncio.Lock()
+        # Failover: switch to backup URL after consecutive stream failures
+        self._stream_failures: int = 0
+        self._using_backup: bool = False
+
+    def _ytdl_format(self) -> str:
+        """Build the ytdl-format string based on max_resolution config."""
+        res = self._config.stream.max_resolution
+        if res == "best":
+            return "bestvideo+bestaudio/best"
+        return f"bestvideo[height<={res}]+bestaudio/best[height<={res}]"
 
     # ── lifecycle ────────────────────────────────────────────────────────
 
     async def start(self) -> None:
         """Launch the mpv subprocess and connect IPC."""
+        async with self._lifecycle_lock:
+            await self._start_unlocked()
+
+    async def _start_unlocked(self) -> None:
+        """Inner start — called under _lifecycle_lock."""
         self._stopping = False
         # clean up stale socket
         try:
@@ -112,7 +130,7 @@ class MpvManager:
             "--no-osd-bar",
             "--osd-level=0",
             "--audio-device=auto",
-            "--ytdl-format=bestvideo[height<=1080]+bestaudio/best[height<=1080]",
+            f"--ytdl-format={self._ytdl_format()}",
             "--stream-lavf-o=reconnect=1,reconnect_streamed=1,reconnect_delay_max=5",
             "--background=0/0/0",  # Pure black when idle
             "--osd-msg1=",  # No OSD messages
@@ -149,6 +167,11 @@ class MpvManager:
 
     async def stop(self) -> None:
         """Graceful shutdown: quit via IPC, then kill."""
+        async with self._lifecycle_lock:
+            await self._stop_unlocked()
+
+    async def _stop_unlocked(self) -> None:
+        """Inner stop — called under _lifecycle_lock."""
         self._stopping = True
 
         if self._monitor_task and not self._monitor_task.done():
@@ -185,10 +208,11 @@ class MpvManager:
         log.info("mpv stopped")
 
     async def restart(self) -> None:
-        """Stop + start."""
-        await self.stop()
-        await asyncio.sleep(0.5)
-        await self.start()
+        """Stop + start under a single lifecycle lock. Propagates start errors."""
+        async with self._lifecycle_lock:
+            await self._stop_unlocked()
+            await asyncio.sleep(0.5)
+            await self._start_unlocked()
 
     # ── commands ─────────────────────────────────────────────────────────
 
@@ -235,6 +259,7 @@ class MpvManager:
             result["dropped_frames"] = 0
             result["decoder_drops"] = 0
             result["resolution"] = ""
+        result["using_backup"] = self._using_backup
         return result
 
     async def set_overlay(self, overlay_id: int, ass_text: str) -> None:
@@ -276,11 +301,17 @@ class MpvManager:
         except Exception:
             return False
 
+    @property
+    def using_backup(self) -> bool:
+        return self._using_backup
+
     def reset_stream_retry(self) -> None:
         """Reset retry backoff when stream URL is changed."""
         self._stream_retry_backoff = 5.0
         self._last_stream_attempt = 0.0
         self._user_stopped = False
+        self._stream_failures = 0
+        self._using_backup = False
 
     def _build_idle_overlay(self, net: dict) -> str:
         """Build multi-line ASS overlay for idle screen."""
@@ -425,17 +456,19 @@ class MpvManager:
 
         Extra keyword arguments are merged into the top-level message as
         named parameters (used by commands like ``osd-overlay``).
+        Uses an IPC lock to ensure atomic send/receive pairs.
         """
-        if not self._writer:
-            raise RuntimeError("IPC not connected")
-        self._request_id += 1
-        rid = self._request_id
-        msg = {"command": command, "request_id": rid, **named_args}
-        payload = json.dumps(msg) + "\n"
-        fut: asyncio.Future = asyncio.get_running_loop().create_future()
-        self._pending[rid] = fut
-        self._writer.write(payload.encode())
-        await self._writer.drain()
+        async with self._ipc_lock:
+            if not self._writer:
+                raise RuntimeError("IPC not connected")
+            self._request_id += 1
+            rid = self._request_id
+            msg = {"command": command, "request_id": rid, **named_args}
+            payload = json.dumps(msg) + "\n"
+            fut: asyncio.Future = asyncio.get_running_loop().create_future()
+            self._pending[rid] = fut
+            self._writer.write(payload.encode())
+            await self._writer.drain()
         try:
             return await asyncio.wait_for(fut, timeout=timeout)
         except asyncio.TimeoutError:
@@ -507,10 +540,24 @@ class MpvManager:
                             # Stream not playing but we have a URL configured
                             now = time.monotonic()
                             if now - self._last_stream_attempt > self._stream_retry_backoff:
-                                log.info("Stream idle, attempting to reload: %s", self._config.stream.url)
+                                self._stream_failures += 1
+                                # Failover: after N consecutive failures, try backup URL
+                                use_url = self._config.stream.url
+                                backup = self._config.stream.backup_url
+                                if (backup and self._stream_failures >= _FAILOVER_THRESHOLD
+                                        and not self._using_backup):
+                                    log.warning(
+                                        "Stream failed %d times, switching to backup: %s",
+                                        self._stream_failures, backup,
+                                    )
+                                    use_url = backup
+                                    self._using_backup = True
+                                elif self._using_backup and backup:
+                                    use_url = backup
+                                log.info("Stream idle, attempting to reload: %s", use_url)
                                 self._last_stream_attempt = now
                                 try:
-                                    await self.load_stream(self._config.stream.url)
+                                    await self.load_stream(use_url)
                                     # Increase backoff for next attempt (max 60s)
                                     self._stream_retry_backoff = min(self._stream_retry_backoff * 1.5, 60.0)
                                 except Exception:
@@ -522,6 +569,7 @@ class MpvManager:
                         except Exception:
                             pass
                         self._stream_retry_backoff = 5.0
+                        self._stream_failures = 0
                         # Track connection type for change detection
                         try:
                             net = _get_network_info()
