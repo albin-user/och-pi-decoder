@@ -24,8 +24,8 @@ KillMode=mixed
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 # Security hardening (NoNewPrivileges omitted — sudo needed for reboot/restart)
 ProtectSystem=strict
-ReadWritePaths=/etc/pi-decoder /tmp /opt/pi-decoder/venv
-ProtectHome=read-only
+ReadWritePaths=/etc/pi-decoder /tmp /opt/pi-decoder/venv /boot/firmware /boot
+ProtectHome=tmpfs
 
 [Install]
 WantedBy=multi-user.target

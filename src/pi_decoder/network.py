@@ -78,6 +78,9 @@ def get_network_info_sync() -> dict:
             ["nmcli", "-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device"],
             capture_output=True, text=True, timeout=3,
         )
+        # Two-pass: collect connected devices, then prioritize ethernet > wifi > hotspot
+        eth_info = None
+        wifi_info = None
         for line in result.stdout.strip().splitlines():
             parts = line.split(":")
             if len(parts) < 4:
@@ -85,21 +88,30 @@ def get_network_info_sync() -> dict:
             dev, dtype, state, conn = parts[0], parts[1], parts[2], parts[3]
             if state != "connected":
                 continue
-            if dtype == "ethernet":
-                info["connection_type"] = "ethernet"
-                info["ip"] = get_ip_for_interface(dev)
-                break
-            elif dtype == "wifi":
+            if dtype == "ethernet" and not eth_info:
+                eth_info = (dev, conn)
+            elif dtype == "wifi" and not wifi_info:
+                wifi_info = (dev, conn)
+
+        if eth_info:
+            info["connection_type"] = "ethernet"
+            info["ip"] = get_ip_for_interface(eth_info[0])
+            # Still track hotspot if wifi is also connected as hotspot
+            if wifi_info:
+                conn = wifi_info[1]
                 if conn.lower() == "hotspot" or "hotspot" in conn.lower():
-                    info["connection_type"] = "hotspot"
                     info["hotspot_active"] = True
-                    info["ip"] = get_ip_for_interface(dev)
-                    info["ssid"] = conn
-                else:
-                    info["connection_type"] = "wifi"
-                    info["ssid"] = conn
-                    info["ip"] = get_ip_for_interface(dev)
-                break
+        elif wifi_info:
+            dev, conn = wifi_info
+            if conn.lower() == "hotspot" or "hotspot" in conn.lower():
+                info["connection_type"] = "hotspot"
+                info["hotspot_active"] = True
+                info["ip"] = get_ip_for_interface(dev)
+                info["ssid"] = conn
+            else:
+                info["connection_type"] = "wifi"
+                info["ssid"] = conn
+                info["ip"] = get_ip_for_interface(dev)
 
         # Get WiFi signal strength if connected via WiFi
         if info["connection_type"] == "wifi":

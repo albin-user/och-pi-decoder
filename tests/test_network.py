@@ -72,6 +72,24 @@ class TestGetNetworkInfoSync:
         assert info["hotspot_active"] is True
         assert info["ip"] == "10.42.0.1"
 
+    def test_ethernet_prioritized_over_hotspot(self):
+        """When both ethernet and wifi/hotspot are connected, ethernet wins."""
+        device_output = "wlan0:wifi:connected:Hotspot\neth0:ethernet:connected:Wired connection 1\n"
+        ip_output = "192.168.1.50/24\n"
+
+        with patch("subprocess.run") as mock_run:
+            def side_effect(cmd, **kw):
+                if "device" in cmd and "show" in cmd:
+                    return _make_sync_result(ip_output)
+                return _make_sync_result(device_output)
+            mock_run.side_effect = side_effect
+
+            info = network.get_network_info_sync()
+
+        assert info["connection_type"] == "ethernet"
+        assert info["ip"] == "192.168.1.50"
+        assert info["hotspot_active"] is True
+
     def test_no_connection_fallback(self):
         device_output = "eth0:ethernet:disconnected:\nwlan0:wifi:disconnected:\n"
 

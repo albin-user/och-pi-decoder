@@ -81,11 +81,24 @@ class MpvManager:
         self._using_backup: bool = False
 
     def _ytdl_format(self) -> str:
-        """Build the ytdl-format string based on max_resolution config."""
+        """Build the ytdl-format string based on max_resolution config.
+
+        Prefer H.264 (avc1) for hardware decode, fall back to VP9 (software),
+        then any codec, then pre-muxed as last resort.
+        """
         res = self._config.stream.max_resolution
         if res == "best":
-            return "bestvideo+bestaudio/best"
-        return f"bestvideo[height<={res}]+bestaudio/best[height<={res}]"
+            return (
+                "bestvideo[vcodec^=avc1]+bestaudio"
+                "/bestvideo[vcodec^=vp9]+bestaudio"
+                "/bestvideo+bestaudio/best"
+            )
+        return (
+            f"bestvideo[height<={res}][vcodec^=avc1]+bestaudio"
+            f"/bestvideo[height<={res}][vcodec^=vp9]+bestaudio"
+            f"/bestvideo[height<={res}]+bestaudio"
+            f"/best[height<={res}]"
+        )
 
     # ── lifecycle ────────────────────────────────────────────────────────
 

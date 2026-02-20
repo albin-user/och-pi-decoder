@@ -549,19 +549,33 @@ class TestYtdlFormat:
     def test_default_1080p(self):
         mgr = _make_manager()
         fmt = mgr._ytdl_format()
-        assert fmt == "bestvideo[height<=1080]+bestaudio/best[height<=1080]"
+        assert fmt == (
+            "bestvideo[height<=1080][vcodec^=avc1]+bestaudio"
+            "/bestvideo[height<=1080][vcodec^=vp9]+bestaudio"
+            "/bestvideo[height<=1080]+bestaudio"
+            "/best[height<=1080]"
+        )
 
     def test_720p(self):
         cfg = _make_config(**{"stream.max_resolution": "720"})
         mgr = MpvManager(cfg)
         fmt = mgr._ytdl_format()
-        assert fmt == "bestvideo[height<=720]+bestaudio/best[height<=720]"
+        assert fmt == (
+            "bestvideo[height<=720][vcodec^=avc1]+bestaudio"
+            "/bestvideo[height<=720][vcodec^=vp9]+bestaudio"
+            "/bestvideo[height<=720]+bestaudio"
+            "/best[height<=720]"
+        )
 
     def test_best(self):
         cfg = _make_config(**{"stream.max_resolution": "best"})
         mgr = MpvManager(cfg)
         fmt = mgr._ytdl_format()
-        assert fmt == "bestvideo+bestaudio/best"
+        assert fmt == (
+            "bestvideo[vcodec^=avc1]+bestaudio"
+            "/bestvideo[vcodec^=vp9]+bestaudio"
+            "/bestvideo+bestaudio/best"
+        )
 
     @patch("pi_decoder.mpv_manager.Path")
     @patch("asyncio.create_subprocess_exec", new_callable=AsyncMock)
@@ -582,7 +596,13 @@ class TestYtdlFormat:
             await mgr.start()
 
         call_args = mock_exec.call_args[0]
-        assert "--ytdl-format=bestvideo[height<=720]+bestaudio/best[height<=720]" in call_args
+        expected_fmt = (
+            "bestvideo[height<=720][vcodec^=avc1]+bestaudio"
+            "/bestvideo[height<=720][vcodec^=vp9]+bestaudio"
+            "/bestvideo[height<=720]+bestaudio"
+            "/best[height<=720]"
+        )
+        assert f"--ytdl-format={expected_fmt}" in call_args
 
 
 # ── Process lifecycle: start ─────────────────────────────────────────────────
