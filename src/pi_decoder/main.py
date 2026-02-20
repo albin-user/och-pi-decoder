@@ -100,10 +100,13 @@ async def async_main() -> None:
     finally:
         shutdown_task.cancel()
         log.info("Shutting down...")
-        if overlay:
-            await overlay.stop()
-        if pco:
-            await pco.close()
+        # Use app accessors to pick up lazily-created objects
+        _overlay = web_app._get_overlay()  # type: ignore[attr-defined]
+        _pco = web_app._get_pco()  # type: ignore[attr-defined]
+        if _overlay:
+            await _overlay.stop()
+        if _pco:
+            await _pco.close()
         await mpv.stop()
 
 

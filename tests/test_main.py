@@ -73,6 +73,12 @@ class TestAsyncMain:
         mock_overlay.start_task = MagicMock()
         mocks["overlay_cls"].return_value = mock_overlay
 
+        # Configure create_app mock to expose _get_overlay/_get_pco accessors
+        mock_app = MagicMock()
+        mock_app._get_overlay = MagicMock(return_value=None)
+        mock_app._get_pco = MagicMock(return_value=None)
+        mocks["create_app"].return_value = mock_app
+
         # Configure uvicorn server mock to exit immediately
         mock_server = MagicMock()
         mock_server.serve = AsyncMock()
@@ -123,6 +129,11 @@ class TestAsyncMain:
         mock_deps["config"].overlay.enabled = True
         mock_deps["config"].pco.app_id = "test_app"
         mock_deps["config"].pco.secret = "test_secret"
+        mock_overlay = mock_deps["overlay_cls"].return_value
+        mock_pco = mock_deps["pco_cls"].return_value
+        # Shutdown reads overlay/pco from app accessors
+        mock_deps["create_app"].return_value._get_overlay.return_value = mock_overlay
+        mock_deps["create_app"].return_value._get_pco.return_value = mock_pco
         from pi_decoder.main import async_main
         await async_main()
         mock_deps["overlay_cls"].assert_called_once()

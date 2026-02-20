@@ -177,6 +177,16 @@ def create_app(
     app = FastAPI(title="Pi-Decoder", docs_url=None, redoc_url=None)
     _config_lock = asyncio.Lock()
 
+    def _ensure_overlay_created() -> None:
+        """Lazily create PCOClient and OverlayUpdater when conditions are met."""
+        nonlocal pco, overlay
+        if not config.overlay.enabled or not config.pco.app_id:
+            return
+        if pco is None:
+            pco = PCOClient(config)
+        if overlay is None:
+            overlay = OverlayUpdater(mpv, pco, config)
+
     # Captive portal middleware (redirects phone connectivity checks to web UI)
     app.add_middleware(CaptivePortalMiddleware, config=config)
 
@@ -315,6 +325,12 @@ def create_app(
             validate_config(config)
             save_config(config, config_path)
         log.info("Config updated: overlay settings changed")
+        if config.overlay.enabled:
+            _ensure_overlay_created()
+            if overlay and not overlay.running:
+                overlay.start_task()
+        elif overlay:
+            await overlay.stop()
         return {"ok": True}
 
     @app.post("/api/config/pco")
@@ -337,7 +353,8 @@ def create_app(
                 config.pco.poll_interval = max(2, min(60, int(data["poll_interval"])))
             validate_config(config)
             save_config(config, config_path)
-        # update PCO client credentials
+        # Lazily create PCO client + overlay if conditions met
+        _ensure_overlay_created()
         if pco:
             pco.update_credentials(
                 config.pco.app_id, config.pco.secret,
@@ -486,6 +503,7 @@ def create_app(
 
     @app.post("/api/restart/overlay")
     async def api_restart_overlay():
+        _ensure_overlay_created()
         if overlay:
             await overlay.stop()
             overlay.start_task()
@@ -493,6 +511,7 @@ def create_app(
 
     @app.post("/api/restart/all")
     async def api_restart_all():
+        _ensure_overlay_created()
         if overlay:
             await overlay.stop()
         try:
@@ -931,5 +950,9 @@ def create_app(
             pass
         except Exception:
             log.debug("Preview WebSocket error", exc_info=True)
+
+    # Expose accessors for lazily-created objects (used by main.py shutdown)
+    app._get_overlay = lambda: overlay  # type: ignore[attr-defined]
+    app._get_pco = lambda: pco  # type: ignore[attr-defined]
 
     return app

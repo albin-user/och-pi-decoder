@@ -143,6 +143,8 @@ class MpvManager:
             "--no-osd-bar",
             "--osd-level=0",
             "--audio-device=auto",
+            "--vd-lavc-threads=4",
+            "--framedrop=vo",
             f"--ytdl-format={self._ytdl_format()}",
             "--stream-lavf-o=reconnect=1,reconnect_streamed=1,reconnect_delay_max=5",
             "--background=0/0/0",  # Pure black when idle

@@ -373,34 +373,34 @@
 
           <div class="form-group">
             <label for="overlayTimezone">Timezone</label>
-            <input type="text" id="overlayTimezone" value="{{ config.overlay.timezone }}" list="tzList">
-            <datalist id="tzList">
-              <option value="America/New_York">
-              <option value="America/Chicago">
-              <option value="America/Denver">
-              <option value="America/Los_Angeles">
-              <option value="America/Phoenix">
-              <option value="America/Anchorage">
-              <option value="Pacific/Honolulu">
-              <option value="America/Toronto">
-              <option value="America/Vancouver">
-              <option value="Europe/London">
-              <option value="Europe/Copenhagen">
-              <option value="Europe/Berlin">
-              <option value="Europe/Paris">
-              <option value="Europe/Amsterdam">
-              <option value="Europe/Oslo">
-              <option value="Europe/Stockholm">
-              <option value="Europe/Helsinki">
-              <option value="Australia/Sydney">
-              <option value="Australia/Melbourne">
-              <option value="Australia/Perth">
-              <option value="Pacific/Auckland">
-              <option value="Asia/Tokyo">
-              <option value="Asia/Seoul">
-              <option value="Asia/Singapore">
-              <option value="Asia/Dubai">
-            </datalist>
+            <select id="overlayTimezone">
+              {% set tz = config.overlay.timezone %}
+              <option value="America/New_York" {% if tz == "America/New_York" %}selected{% endif %}>America/New_York</option>
+              <option value="America/Chicago" {% if tz == "America/Chicago" %}selected{% endif %}>America/Chicago</option>
+              <option value="America/Denver" {% if tz == "America/Denver" %}selected{% endif %}>America/Denver</option>
+              <option value="America/Los_Angeles" {% if tz == "America/Los_Angeles" %}selected{% endif %}>America/Los_Angeles</option>
+              <option value="America/Phoenix" {% if tz == "America/Phoenix" %}selected{% endif %}>America/Phoenix</option>
+              <option value="America/Anchorage" {% if tz == "America/Anchorage" %}selected{% endif %}>America/Anchorage</option>
+              <option value="Pacific/Honolulu" {% if tz == "Pacific/Honolulu" %}selected{% endif %}>Pacific/Honolulu</option>
+              <option value="America/Toronto" {% if tz == "America/Toronto" %}selected{% endif %}>America/Toronto</option>
+              <option value="America/Vancouver" {% if tz == "America/Vancouver" %}selected{% endif %}>America/Vancouver</option>
+              <option value="Europe/London" {% if tz == "Europe/London" %}selected{% endif %}>Europe/London</option>
+              <option value="Europe/Copenhagen" {% if tz == "Europe/Copenhagen" %}selected{% endif %}>Europe/Copenhagen</option>
+              <option value="Europe/Berlin" {% if tz == "Europe/Berlin" %}selected{% endif %}>Europe/Berlin</option>
+              <option value="Europe/Paris" {% if tz == "Europe/Paris" %}selected{% endif %}>Europe/Paris</option>
+              <option value="Europe/Amsterdam" {% if tz == "Europe/Amsterdam" %}selected{% endif %}>Europe/Amsterdam</option>
+              <option value="Europe/Oslo" {% if tz == "Europe/Oslo" %}selected{% endif %}>Europe/Oslo</option>
+              <option value="Europe/Stockholm" {% if tz == "Europe/Stockholm" %}selected{% endif %}>Europe/Stockholm</option>
+              <option value="Europe/Helsinki" {% if tz == "Europe/Helsinki" %}selected{% endif %}>Europe/Helsinki</option>
+              <option value="Australia/Sydney" {% if tz == "Australia/Sydney" %}selected{% endif %}>Australia/Sydney</option>
+              <option value="Australia/Melbourne" {% if tz == "Australia/Melbourne" %}selected{% endif %}>Australia/Melbourne</option>
+              <option value="Australia/Perth" {% if tz == "Australia/Perth" %}selected{% endif %}>Australia/Perth</option>
+              <option value="Pacific/Auckland" {% if tz == "Pacific/Auckland" %}selected{% endif %}>Pacific/Auckland</option>
+              <option value="Asia/Tokyo" {% if tz == "Asia/Tokyo" %}selected{% endif %}>Asia/Tokyo</option>
+              <option value="Asia/Seoul" {% if tz == "Asia/Seoul" %}selected{% endif %}>Asia/Seoul</option>
+              <option value="Asia/Singapore" {% if tz == "Asia/Singapore" %}selected{% endif %}>Asia/Singapore</option>
+              <option value="Asia/Dubai" {% if tz == "Asia/Dubai" %}selected{% endif %}>Asia/Dubai</option>
+            </select>
             <div class="help">Used for the "Ends at HH:MM" display. Pick your church's timezone.</div>
           </div>
 
