@@ -1538,3 +1538,44 @@ class TestPerformanceFlags:
 
         call_args = mock_exec.call_args[0]
         assert "--framedrop=vo" in call_args
+
+    @patch("pi_decoder.mpv_manager.Path")
+    @patch("asyncio.create_subprocess_exec", new_callable=AsyncMock)
+    @patch("asyncio.sleep", new_callable=AsyncMock)
+    async def test_start_uses_gpu_vo_with_drm_context(
+        self, mock_sleep, mock_exec, mock_path_cls
+    ):
+        mgr = _make_manager()
+        mock_proc = MagicMock()
+        mock_proc.returncode = None
+        mock_exec.return_value = mock_proc
+        mgr._connect_ipc = AsyncMock()
+        mock_path_cls.return_value.exists.return_value = True
+
+        with patch("asyncio.create_task") as mock_task:
+            mock_task.return_value = MagicMock(done=MagicMock(return_value=False))
+            await mgr.start()
+
+        call_args = mock_exec.call_args[0]
+        assert "--vo=gpu" in call_args
+        assert "--gpu-context=drm" in call_args
+
+    @patch("pi_decoder.mpv_manager.Path")
+    @patch("asyncio.create_subprocess_exec", new_callable=AsyncMock)
+    @patch("asyncio.sleep", new_callable=AsyncMock)
+    async def test_start_includes_skiploopfilter(
+        self, mock_sleep, mock_exec, mock_path_cls
+    ):
+        mgr = _make_manager()
+        mock_proc = MagicMock()
+        mock_proc.returncode = None
+        mock_exec.return_value = mock_proc
+        mgr._connect_ipc = AsyncMock()
+        mock_path_cls.return_value.exists.return_value = True
+
+        with patch("asyncio.create_task") as mock_task:
+            mock_task.return_value = MagicMock(done=MagicMock(return_value=False))
+            await mgr.start()
+
+        call_args = mock_exec.call_args[0]
+        assert "--vd-lavc-skiploopfilter=all" in call_args

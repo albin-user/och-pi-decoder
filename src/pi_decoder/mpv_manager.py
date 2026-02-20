@@ -129,7 +129,8 @@ class MpvManager:
 
         cmd = [
             "mpv",
-            "--vo=drm",
+            "--vo=gpu",
+            "--gpu-context=drm",
             *(["--drm-device=" + drm_dev] if drm_dev else []),
             "--no-terminal",
             f"--hwdec={self._config.stream.hwdec}",
@@ -145,6 +146,7 @@ class MpvManager:
             "--audio-device=auto",
             "--vd-lavc-threads=4",
             "--vd-lavc-fast",
+            "--vd-lavc-skiploopfilter=all",
             "--framedrop=vo",
             f"--ytdl-format={self._ytdl_format()}",
             "--stream-lavf-o=reconnect=1,reconnect_streamed=1,reconnect_delay_max=5",
