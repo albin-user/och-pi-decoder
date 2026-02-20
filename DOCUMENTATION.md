@@ -69,7 +69,7 @@ sudo raspi-config
 
 **In raspi-config menu:**
 - **1 System Options** → **S6 Boot / Auto Login** → **B2 Console Autologin**
-  *Required.* mpv uses `--vo=drm` to render video directly to HDMI via DRM/KMS. This requires an active TTY session — without console autologin, no user is logged in after boot and mpv cannot acquire the display.
+  *Required.* mpv uses `--vo=gpu --gpu-context=drm` to render video via GPU directly to HDMI (no desktop/Wayland needed). This requires an active TTY session — without console autologin, no user is logged in after boot and mpv cannot acquire the display.
 - **3 Interface Options** → **P2 SSH** → **Yes** (if you want remote access)
   *Optional.* Since Pi OS Lite has no desktop, SSH is your only way to manage the device remotely (config changes, logs, updates). Without it you'd need a physical keyboard.
 - **5 Localisation Options** → Set your timezone
