@@ -144,6 +144,7 @@ class MpvManager:
             "--osd-level=0",
             "--audio-device=auto",
             "--vd-lavc-threads=4",
+            "--vd-lavc-fast",
             "--framedrop=vo",
             f"--ytdl-format={self._ytdl_format()}",
             "--stream-lavf-o=reconnect=1,reconnect_streamed=1,reconnect_delay_max=5",
@@ -269,11 +270,13 @@ class MpvManager:
             w = await self._get_property("video-params/w")
             h = await self._get_property("video-params/h")
             result["resolution"] = f"{w}x{h}" if w and h else ""
+            result["video_codec"] = await self._get_property("video-codec") or ""
         except Exception:
             result["fps"] = 0
             result["dropped_frames"] = 0
             result["decoder_drops"] = 0
             result["resolution"] = ""
+            result["video_codec"] = ""
         result["using_backup"] = self._using_backup
         return result
 

@@ -306,7 +306,7 @@
     if (_el.mpvPerfLine) {
       if (d.mpv.playing && d.mpv.fps) {
         _el.mpvPerfLine.style.display = "";
-        _el.mpvRes.textContent = d.mpv.resolution || "--";
+        _el.mpvRes.textContent = (d.mpv.resolution || "--") + (d.mpv.video_codec ? " " + d.mpv.video_codec : "");
         _el.mpvFps.textContent = d.mpv.fps ? d.mpv.fps.toFixed(1) : "--";
         var totalDrops = (d.mpv.dropped_frames || 0) + (d.mpv.decoder_drops || 0);
         _el.mpvDrops.textContent = totalDrops;

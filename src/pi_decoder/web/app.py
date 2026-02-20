@@ -362,6 +362,8 @@ def create_app(
                 folder_id=config.pco.folder_id,
                 search_mode=config.pco.search_mode,
             )
+        if config.overlay.enabled and overlay and not overlay.running:
+            overlay.start_task()
         log.info("Config updated: PCO credentials updated")
         return {"ok": True}
 

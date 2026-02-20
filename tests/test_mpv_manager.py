@@ -283,6 +283,7 @@ class TestGetStatus:
             0,       # decoder-frame-drop-count
             1920,    # video-params/w
             1080,    # video-params/h
+            "h264",  # video-codec
         ])
         status = await mgr.get_status()
         assert status["alive"] is True
@@ -293,6 +294,7 @@ class TestGetStatus:
         assert status["hwdec_current"] == "v4l2m2m"
         assert status["fps"] == 29.97
         assert status["resolution"] == "1920x1080"
+        assert status["video_codec"] == "h264"
 
     async def test_status_when_paused(self):
         mgr = _make_manager()
@@ -307,6 +309,7 @@ class TestGetStatus:
             0,       # decoder-frame-drop-count
             None,    # video-params/w
             None,    # video-params/h
+            "",      # video-codec
         ])
         status = await mgr.get_status()
         assert status["paused"] is True
@@ -325,6 +328,7 @@ class TestGetStatus:
             0,       # decoder-frame-drop-count
             None,    # video-params/w
             None,    # video-params/h
+            None,    # video-codec
         ])
         status = await mgr.get_status()
         assert status["idle"] is True
@@ -1494,6 +1498,26 @@ class TestPerformanceFlags:
 
         call_args = mock_exec.call_args[0]
         assert "--vd-lavc-threads=4" in call_args
+
+    @patch("pi_decoder.mpv_manager.Path")
+    @patch("asyncio.create_subprocess_exec", new_callable=AsyncMock)
+    @patch("asyncio.sleep", new_callable=AsyncMock)
+    async def test_start_includes_vd_lavc_fast(
+        self, mock_sleep, mock_exec, mock_path_cls
+    ):
+        mgr = _make_manager()
+        mock_proc = MagicMock()
+        mock_proc.returncode = None
+        mock_exec.return_value = mock_proc
+        mgr._connect_ipc = AsyncMock()
+        mock_path_cls.return_value.exists.return_value = True
+
+        with patch("asyncio.create_task") as mock_task:
+            mock_task.return_value = MagicMock(done=MagicMock(return_value=False))
+            await mgr.start()
+
+        call_args = mock_exec.call_args[0]
+        assert "--vd-lavc-fast" in call_args
 
     @patch("pi_decoder.mpv_manager.Path")
     @patch("asyncio.create_subprocess_exec", new_callable=AsyncMock)

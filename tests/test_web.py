@@ -470,6 +470,31 @@ class TestLazyOverlayCreation:
         MockPCO.assert_not_called()
         MockOverlay.assert_not_called()
 
+    def test_pco_config_starts_overlay_after_creation(self, config, mock_mpv, tmp_path):
+        """Saving PCO credentials should start the overlay if it was lazily created."""
+        config.overlay.enabled = True
+        config_path = str(tmp_path / "config.toml")
+        app = create_app(mock_mpv, None, None, config, config_path)
+        with patch("pi_decoder.web.app.PCOClient") as MockPCO, \
+             patch("pi_decoder.web.app.OverlayUpdater") as MockOverlay:
+            mock_pco_inst = MagicMock()
+            mock_pco_inst.update_credentials = MagicMock()
+            MockPCO.return_value = mock_pco_inst
+            mock_ov = MagicMock()
+            mock_ov.running = False
+            mock_ov.start_task = MagicMock()
+            MockOverlay.return_value = mock_ov
+            c = TestClient(app)
+            resp = c.post("/api/config/pco", json={
+                "app_id": "new_id",
+                "secret": "new_secret",
+                "service_type_id": "123",
+            })
+        assert resp.status_code == 200
+        MockOverlay.assert_called_once()
+        mock_pco_inst.update_credentials.assert_called_once()
+        mock_ov.start_task.assert_called_once()
+
     def test_overlay_config_stops_when_disabled(self, config, mock_mpv, mock_overlay, mock_pco, tmp_path):
         """Saving overlay config with enabled=False should stop existing overlay."""
         config.overlay.enabled = True
