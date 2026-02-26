@@ -200,6 +200,7 @@ class OverlayUpdater:
         self._running = False
         self._task: asyncio.Task | None = None
         self._last_status: LiveStatus = LiveStatus(message="Initializing...")
+        self._last_overlay_warn: float = 0.0
 
     @property
     def last_status(self) -> LiveStatus:
@@ -235,7 +236,13 @@ class OverlayUpdater:
                         ass = format_overlay(self._last_status, self._config.overlay)
                         await self._mpv.set_overlay(OVERLAY_ID, ass)
                     except Exception:
-                        log.debug("Overlay push failed", exc_info=True)
+                        import time as _time
+                        now = _time.monotonic()
+                        if now - self._last_overlay_warn > 30.0:
+                            self._last_overlay_warn = now
+                            log.warning("Overlay push failed", exc_info=True)
+                        else:
+                            log.debug("Overlay push failed", exc_info=True)
 
                 await asyncio.sleep(1)
                 seconds_since_poll += 1

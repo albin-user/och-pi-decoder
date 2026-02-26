@@ -825,41 +825,45 @@
   window.restartVideo = function () { confirmAction("Restart video player?", "/api/restart/video", "Video restarting...", "Restart"); };
   window.restartOverlay = function () { confirmAction("Restart the overlay?", "/api/restart/overlay", "Overlay restarting...", "Restart"); };
   window.restartAll = function () { confirmAction("Restart all services?", "/api/restart/all", "All services restarting...", "Restart All"); };
+  function doReboot() {
+    apiPost("/api/reboot").then(function () {
+      pageClosing = true;
+      if (statusWs) statusWs.close();
+      if (previewWs) previewWs.close();
+      var badge = _el.headerBadge;
+      var remaining = 90;
+      if (badge) {
+        badge.textContent = "Rebooting\u2026 " + remaining + "s";
+        badge.className = "status-badge offline";
+      }
+      var iv = setInterval(function () {
+        remaining--;
+        if (badge) badge.textContent = "Rebooting\u2026 " + remaining + "s";
+        if (remaining <= 0) {
+          clearInterval(iv);
+          if (badge) badge.textContent = "Reconnecting\u2026";
+          var retries = 0;
+          var poll = setInterval(function () {
+            retries++;
+            fetch("/api/health", { signal: AbortSignal.timeout(3000) })
+              .then(function (r) {
+                if (r.ok) { clearInterval(poll); location.reload(); }
+              })
+              .catch(function () {});
+            if (retries >= 30) {
+              clearInterval(poll);
+              if (badge) badge.textContent = "Offline";
+            }
+          }, 3000);
+        }
+      }, 1000);
+    });
+  }
+
   window.rebootSystem = function () {
     showConfirm("Reboot the system? It will be offline for ~90 seconds.", "Reboot").then(function (ok) {
       if (!ok) return;
-      apiPost("/api/reboot").then(function () {
-        pageClosing = true;
-        if (statusWs) statusWs.close();
-        if (previewWs) previewWs.close();
-        var badge = _el.headerBadge;
-        var remaining = 90;
-        if (badge) {
-          badge.textContent = "Rebooting\u2026 " + remaining + "s";
-          badge.className = "status-badge offline";
-        }
-        var iv = setInterval(function () {
-          remaining--;
-          if (badge) badge.textContent = "Rebooting\u2026 " + remaining + "s";
-          if (remaining <= 0) {
-            clearInterval(iv);
-            if (badge) badge.textContent = "Reconnecting\u2026";
-            var retries = 0;
-            var poll = setInterval(function () {
-              retries++;
-              fetch("/api/health", { signal: AbortSignal.timeout(3000) })
-                .then(function (r) {
-                  if (r.ok) { clearInterval(poll); location.reload(); }
-                })
-                .catch(function () {});
-              if (retries >= 30) {
-                clearInterval(poll);
-                if (badge) badge.textContent = "Offline";
-              }
-            }, 3000);
-          }
-        }, 1000);
-      });
+      doReboot();
     });
   };
   window.shutdownSystem = function () {
@@ -1025,11 +1029,7 @@
         if (d.ok) {
           toast("HDMI resolution set to " + combined);
           showConfirm("Reboot now to apply the new resolution?", "Reboot").then(function (reboot) {
-            if (reboot) {
-              apiPost("/api/reboot").then(function () {
-                toast("Rebooting...");
-              });
-            }
+            if (reboot) doReboot();
           });
         } else {
           toast(d.error || "Failed to set resolution", "error");

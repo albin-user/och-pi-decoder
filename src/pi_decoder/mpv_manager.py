@@ -79,6 +79,7 @@ class MpvManager:
         # Failover: switch to backup URL after consecutive stream failures
         self._stream_failures: int = 0
         self._using_backup: bool = False
+        self._overlay_confirmed: bool = False
 
     def _ytdl_format(self) -> str:
         """Build the ytdl-format string based on max_resolution config.
@@ -137,6 +138,7 @@ class MpvManager:
             "--keepaspect=yes",
             f"--input-ipc-server={IPC_SOCKET}",
             "--idle=yes",
+            "--force-window=yes",
             "--cache=yes",
             "--demuxer-max-bytes=50M",
             f"--demuxer-readahead-secs={self._config.stream.network_caching // 1000}",
@@ -289,6 +291,9 @@ class MpvManager:
             id=overlay_id, format="ass-events", data=ass_text,
             res_x=1920, res_y=1080,
         )
+        if not self._overlay_confirmed:
+            self._overlay_confirmed = True
+            log.info("osd-overlay accepted by mpv (id=%d)", overlay_id)
 
     async def remove_overlay(self, overlay_id: int) -> None:
         await self._send(["osd-overlay"], id=overlay_id, format="none", data="")
@@ -438,6 +443,7 @@ class MpvManager:
                 pass
         self._reader = None
         self._writer = None
+        self._overlay_confirmed = False
         # cancel all pending futures
         for fut in self._pending.values():
             if not fut.done():
