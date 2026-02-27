@@ -19,6 +19,11 @@ install -m 644 "${STAGE_DIR}/02-configure/files/20auto-upgrades" \
 install -m 755 "${STAGE_DIR}/02-configure/files/10-pi-decoder-single-iface" \
     "${ROOTFS_DIR}/etc/NetworkManager/dispatcher.d/"
 
+# Install dnsmasq config for captive portal DNS (resolves all queries to hotspot IP)
+install -d "${ROOTFS_DIR}/etc/NetworkManager/dnsmasq-shared.d"
+install -m 644 "${STAGE_DIR}/02-configure/files/captive-portal-dnsmasq.conf" \
+    "${ROOTFS_DIR}/etc/NetworkManager/dnsmasq-shared.d/"
+
 # Install network fallback script and service
 install -d "${ROOTFS_DIR}/opt/pi-decoder/deploy"
 install -m 755 "${STAGE_DIR}/02-configure/files/pi-decoder-network.sh" \

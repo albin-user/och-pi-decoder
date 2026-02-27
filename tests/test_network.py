@@ -109,6 +109,8 @@ class TestGetNetworkInfoSync:
 
 class TestScanWifi:
 
+    _NOT_HOTSPOT = {"hotspot_active": False, "ssid": ""}
+
     @pytest.mark.asyncio
     async def test_scan_returns_sorted_list(self):
         scan_output = (
@@ -118,11 +120,13 @@ class TestScanWifi:
             "Network1:60:WPA2:\n"  # duplicate, lower signal — should be skipped
         )
 
-        with patch("pi_decoder.network._run_nmcli", new_callable=AsyncMock) as mock:
-            mock.return_value = scan_output
-            with patch("asyncio.sleep", new_callable=AsyncMock):
-                result = await network.scan_wifi()
+        with patch("pi_decoder.network.get_network_info_sync", return_value=self._NOT_HOTSPOT):
+            with patch("pi_decoder.network._run_nmcli", new_callable=AsyncMock) as mock:
+                mock.return_value = scan_output
+                with patch("asyncio.sleep", new_callable=AsyncMock):
+                    result, hotspot_mode = await network.scan_wifi()
 
+        assert hotspot_mode is False
         assert len(result) == 3
         assert result[0]["ssid"] == "Network1"
         assert result[0]["signal"] == 85
@@ -132,27 +136,53 @@ class TestScanWifi:
 
     @pytest.mark.asyncio
     async def test_scan_handles_empty(self):
-        with patch("pi_decoder.network._run_nmcli", new_callable=AsyncMock, return_value=""):
-            with patch("asyncio.sleep", new_callable=AsyncMock):
-                result = await network.scan_wifi()
+        with patch("pi_decoder.network.get_network_info_sync", return_value=self._NOT_HOTSPOT):
+            with patch("pi_decoder.network._run_nmcli", new_callable=AsyncMock, return_value=""):
+                with patch("asyncio.sleep", new_callable=AsyncMock):
+                    result, hotspot_mode = await network.scan_wifi()
         assert result == []
+        assert hotspot_mode is False
 
     @pytest.mark.asyncio
     async def test_scan_handles_failure(self):
-        with patch("pi_decoder.network._run_nmcli", new_callable=AsyncMock,
-                    side_effect=RuntimeError("failed")):
-            with patch("asyncio.sleep", new_callable=AsyncMock):
-                result = await network.scan_wifi()
+        with patch("pi_decoder.network.get_network_info_sync", return_value=self._NOT_HOTSPOT):
+            with patch("pi_decoder.network._run_nmcli", new_callable=AsyncMock,
+                        side_effect=RuntimeError("failed")):
+                with patch("asyncio.sleep", new_callable=AsyncMock):
+                    result, hotspot_mode = await network.scan_wifi()
         assert result == []
+        assert hotspot_mode is False
 
     @pytest.mark.asyncio
     async def test_scan_skips_empty_ssid(self):
         scan_output = ":85:WPA2:\n--:45:WPA2:\nGoodNetwork:72:WPA2:\n"
-        with patch("pi_decoder.network._run_nmcli", new_callable=AsyncMock, return_value=scan_output):
-            with patch("asyncio.sleep", new_callable=AsyncMock):
-                result = await network.scan_wifi()
+        with patch("pi_decoder.network.get_network_info_sync", return_value=self._NOT_HOTSPOT):
+            with patch("pi_decoder.network._run_nmcli", new_callable=AsyncMock, return_value=scan_output):
+                with patch("asyncio.sleep", new_callable=AsyncMock):
+                    result, _ = await network.scan_wifi()
         assert len(result) == 1
         assert result[0]["ssid"] == "GoodNetwork"
+
+    @pytest.mark.asyncio
+    async def test_scan_returns_hotspot_mode_when_active(self):
+        hotspot_info = {"hotspot_active": True, "ssid": "Decoder"}
+        with patch("pi_decoder.network.get_network_info_sync", return_value=hotspot_info):
+            result, hotspot_mode = await network.scan_wifi()
+        assert result == []
+        assert hotspot_mode is True
+
+    @pytest.mark.asyncio
+    async def test_scan_does_not_filter_connected_ssid(self):
+        """When connected to WiFi normally, the connected SSID should appear in results."""
+        scan_output = "HomeWiFi:90:WPA2:*\nNeighborWiFi:60:WPA2:\n"
+        info = {"hotspot_active": False, "ssid": "HomeWiFi"}
+        with patch("pi_decoder.network.get_network_info_sync", return_value=info):
+            with patch("pi_decoder.network._run_nmcli", new_callable=AsyncMock, return_value=scan_output):
+                with patch("asyncio.sleep", new_callable=AsyncMock):
+                    result, hotspot_mode = await network.scan_wifi()
+        assert hotspot_mode is False
+        assert len(result) == 2
+        assert result[0]["ssid"] == "HomeWiFi"
 
 
 class TestConnectWifi:
@@ -222,12 +252,35 @@ class TestSavedNetworks:
 
     @pytest.mark.asyncio
     async def test_forget_network(self):
-        with patch("pi_decoder.network._run_nmcli", new_callable=AsyncMock,
-                    return_value="Connection deleted") as mock:
+        mock_proc = AsyncMock()
+        mock_proc.communicate = AsyncMock(return_value=(b"Connection deleted\n", b""))
+        mock_proc.returncode = 0
+        mock_proc.kill = AsyncMock()
+        mock_proc.wait = AsyncMock()
+
+        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock,
+                    return_value=mock_proc) as mock_exec:
             result = await network.forget_network("OldWiFi")
         assert "deleted" in result.lower()
-        # Verify the right connection name was passed
-        mock.assert_called_once_with("connection", "delete", "OldWiFi")
+        # Verify sudo nmcli was called
+        mock_exec.assert_called_once_with(
+            "sudo", "nmcli", "connection", "delete", "OldWiFi",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+    @pytest.mark.asyncio
+    async def test_forget_network_failure(self):
+        mock_proc = AsyncMock()
+        mock_proc.communicate = AsyncMock(return_value=(b"", b"Permission denied\n"))
+        mock_proc.returncode = 7
+        mock_proc.kill = AsyncMock()
+        mock_proc.wait = AsyncMock()
+
+        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock,
+                    return_value=mock_proc):
+            with pytest.raises(RuntimeError, match="nmcli failed"):
+                await network.forget_network("OldWiFi")
 
 
 class TestGetActiveConnectionName:

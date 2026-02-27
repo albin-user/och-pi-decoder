@@ -150,8 +150,18 @@ async def get_network_status() -> dict:
     return await asyncio.to_thread(get_network_info_sync)
 
 
-async def scan_wifi() -> list[dict]:
-    """Scan for WiFi networks. Returns deduplicated list sorted by signal."""
+async def scan_wifi() -> tuple[list[dict], bool]:
+    """Scan for WiFi networks. Returns (networks, hotspot_mode).
+
+    When in hotspot mode the radio cannot scan, so returns an empty list
+    and hotspot_mode=True so the caller can inform the user.
+    """
+    # Check if hotspot is active — scanning is impossible in AP mode
+    status = await asyncio.to_thread(get_network_info_sync)
+    if status.get("hotspot_active"):
+        log.warning("WiFi scan skipped: hotspot is active (AP mode)")
+        return [], True
+
     try:
         # Force a rescan
         try:
@@ -165,7 +175,7 @@ async def scan_wifi() -> list[dict]:
         )
     except Exception:
         log.debug("WiFi scan failed", exc_info=True)
-        return []
+        return [], False
 
     seen: dict[str, dict] = {}
     for line in output.strip().splitlines():
@@ -192,7 +202,7 @@ async def scan_wifi() -> list[dict]:
                 "in_use": in_use,
             }
 
-    return sorted(seen.values(), key=lambda x: x["signal"], reverse=True)
+    return sorted(seen.values(), key=lambda x: x["signal"], reverse=True), False
 
 
 async def connect_wifi(ssid: str, password: str) -> str:
@@ -280,10 +290,29 @@ async def get_saved_networks() -> list[str]:
 
 
 async def forget_network(name: str) -> str:
-    """Delete a saved WiFi connection."""
-    output = await _run_nmcli("connection", "delete", name)
-    log.info("Forgot network: %s", name)
-    return output.strip()
+    """Delete a saved WiFi connection.
+
+    Uses sudo because connections created by the root-owned boot script
+    are system-owned and the pi user lacks polkit permission to delete them.
+    """
+    proc = await asyncio.create_subprocess_exec(
+        "sudo", "nmcli", "connection", "delete", name,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(
+            proc.communicate(), timeout=_TIMEOUT,
+        )
+        if proc.returncode != 0:
+            err = stderr.decode(errors="replace").strip()
+            raise RuntimeError(f"nmcli failed (rc={proc.returncode}): {err}")
+        log.info("Forgot network: %s", name)
+        return stdout.decode(errors="replace").strip()
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise TimeoutError("nmcli timed out")
 
 
 # ── Static IP management ─────────────────────────────────────────

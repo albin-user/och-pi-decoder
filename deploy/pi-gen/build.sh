@@ -41,6 +41,8 @@ cp "$PROJECT_DIR/deploy/journald-pi-decoder.conf" \
    "$SCRIPT_DIR/pi-gen/stage-pi-decoder/02-configure/files/"
 cp "$PROJECT_DIR/deploy/sudoers-pi-decoder" \
    "$SCRIPT_DIR/pi-gen/stage-pi-decoder/02-configure/files/"
+cp "$PROJECT_DIR/deploy/captive-portal-dnsmasq.conf" \
+   "$SCRIPT_DIR/pi-gen/stage-pi-decoder/02-configure/files/"
 
 # Copy our config
 cp "$SCRIPT_DIR/config" "$SCRIPT_DIR/pi-gen/"
