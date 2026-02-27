@@ -68,7 +68,7 @@ class TestConfigDefaults:
 
     def test_display_defaults(self):
         cfg = DisplayConfig()
-        assert cfg.hdmi_resolution == "1920x1080@60D"
+        assert cfg.hdmi_resolution == "1920x1080@30D"
 
     def test_full_config_defaults(self):
         cfg = Config()
@@ -284,13 +284,22 @@ max_resolution = "720"
         assert cfg.stream.max_resolution == "720"
 
     def test_invalid_hdmi_resolution_defaults(self, tmp_config: Path):
-        """Invalid hdmi_resolution should default to 1920x1080@60D."""
+        """Invalid hdmi_resolution should default to 1920x1080@30D."""
         tmp_config.write_text("""
 [display]
 hdmi_resolution = "not-a-resolution"
 """)
         cfg = load_config(tmp_config)
-        assert cfg.display.hdmi_resolution == "1920x1080@60D"
+        assert cfg.display.hdmi_resolution == "1920x1080@30D"
+
+    def test_120hz_rejected_falls_back(self, tmp_config: Path):
+        """120Hz should be rejected and fall back to default."""
+        tmp_config.write_text("""
+[display]
+hdmi_resolution = "1920x1080@120D"
+""")
+        cfg = load_config(tmp_config)
+        assert cfg.display.hdmi_resolution == "1920x1080@30D"
 
     def test_valid_hdmi_resolution_preserved(self, tmp_config: Path):
         """Valid hdmi_resolution values should be preserved."""

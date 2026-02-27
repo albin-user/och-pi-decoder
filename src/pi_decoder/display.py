@@ -15,6 +15,49 @@ _DRM_MODES_GLOB = "/sys/class/drm/card*-HDMI-A-1/modes"
 
 _FALLBACK_MODES = ["1920x1080", "1280x720", "720x480"]
 
+_ALL_RATES = [24, 25, 30, 50, 60]
+_4K_RATES_PI4 = [24, 25, 30]
+_4K_RATES_PI5 = [24, 25, 30, 50, 60]
+
+_PI_MODEL_PATH = Path("/proc/device-tree/model")
+
+
+def get_pi_model() -> int:
+    """Detect the Raspberry Pi model number (4, 5, etc.).
+
+    Reads /proc/device-tree/model and parses "Raspberry Pi N".
+    Falls back to 4 (most restrictive) on failure.
+    """
+    try:
+        text = _PI_MODEL_PATH.read_text().strip().rstrip("\x00")
+        match = re.search(r'Raspberry Pi (\d+)', text)
+        if match:
+            return int(match.group(1))
+    except Exception:
+        log.debug("Could not detect Pi model, defaulting to 4", exc_info=True)
+    return 4
+
+
+def get_refresh_rates_for_resolution(resolution: str, pi_model: int | None = None) -> list[int]:
+    """Return available refresh rates for a given resolution.
+
+    For 4K (>= 3840x2160) on Pi 4, rates are limited to 24/25/30 Hz.
+    Pi 5+ supports all rates at 4K. All other resolutions get all rates.
+    """
+    if pi_model is None:
+        pi_model = get_pi_model()
+
+    # Check if this is a 4K+ resolution
+    m = re.match(r'^(\d+)x(\d+)', resolution)
+    if m:
+        w, h = int(m.group(1)), int(m.group(2))
+        if w >= 3840 and h >= 2160:
+            if pi_model <= 4:
+                return list(_4K_RATES_PI4)
+            return list(_4K_RATES_PI5)
+
+    return list(_ALL_RATES)
+
 
 def get_available_modes() -> list[str]:
     """Read available HDMI modes from DRM sysfs.

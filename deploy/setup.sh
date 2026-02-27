@@ -75,6 +75,10 @@ systemctl enable pi-decoder-network
 # Install single-interface policy dispatcher script
 install -m 755 "$SCRIPT_DIR/10-pi-decoder-single-iface" /etc/NetworkManager/dispatcher.d/
 
+# Install dnsmasq config for captive portal DNS (resolves all queries to hotspot IP)
+mkdir -p /etc/NetworkManager/dnsmasq-shared.d
+install -m 644 "$SCRIPT_DIR/captive-portal-dnsmasq.conf" /etc/NetworkManager/dnsmasq-shared.d/
+
 # Remove legacy services if present
 for svc in vlc-video pco-overlay config-web vlc-watchdog vlc-process-monitor x0vncserver church-decoder church-decoder-network decoder decoder-network; do
     if systemctl is-enabled "$svc" 2>/dev/null; then
@@ -129,8 +133,8 @@ CMDLINE="/boot/firmware/cmdline.txt"
 if [ -f "$CMDLINE" ]; then
     # Remove any existing video= parameter, then append ours
     sed -i 's/ video=[^ ]*//' "$CMDLINE"
-    sed -i 's/$/ video=HDMI-A-1:1920x1080@60D/' "$CMDLINE"
-    echo "  Set KMS resolution: 1920x1080@60Hz (cmdline.txt)"
+    sed -i 's/$/ video=HDMI-A-1:1920x1080@30D/' "$CMDLINE"
+    echo "  Set KMS resolution: 1920x1080@30Hz (cmdline.txt)"
     # Prevent console blanking (no desktop to manage DPMS)
     if ! grep -q 'consoleblank=' "$CMDLINE"; then
         sed -i 's/$/ consoleblank=0/' "$CMDLINE"

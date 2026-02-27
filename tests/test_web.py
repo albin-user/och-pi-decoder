@@ -259,10 +259,10 @@ class TestScreenshot:
 
 
 class TestWifiScan:
-    @patch("pi_decoder.network.scan_wifi", new_callable=AsyncMock, return_value=[
-        {"ssid": "Network1", "signal": -45},
-        {"ssid": "Network2", "signal": -70},
-    ])
+    @patch("pi_decoder.network.scan_wifi", new_callable=AsyncMock, return_value=(
+        [{"ssid": "Network1", "signal": -45}, {"ssid": "Network2", "signal": -70}],
+        False,
+    ))
     def test_wifi_scan_returns_networks(self, _mock_scan, client):
         resp = client.get("/api/network/wifi-scan")
         assert resp.status_code == 200
@@ -270,6 +270,15 @@ class TestWifiScan:
         assert "networks" in data
         assert len(data["networks"]) == 2
         assert data["networks"][0]["ssid"] == "Network1"
+        assert data["hotspot_mode"] is False
+
+    @patch("pi_decoder.network.scan_wifi", new_callable=AsyncMock, return_value=([], True))
+    def test_wifi_scan_hotspot_mode(self, _mock_scan, client):
+        resp = client.get("/api/network/wifi-scan")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["networks"] == []
+        assert data["hotspot_mode"] is True
 
 
 class TestNetworkStatus:
@@ -826,14 +835,31 @@ class TestStreamMaxResolution:
 
 
 class TestDisplayModes:
-    @patch("pi_decoder.display.get_current_resolution", return_value="1920x1080@60D")
+    @patch("pi_decoder.display.get_current_resolution", return_value="1920x1080@30D")
     @patch("pi_decoder.display.get_available_modes", return_value=["1920x1080", "1280x720"])
-    def test_get_display_modes(self, _mock_modes, _mock_current, client):
+    @patch("pi_decoder.display.get_pi_model", return_value=4)
+    def test_get_display_modes_structured(self, _mock_pi, _mock_modes, _mock_current, client):
         resp = client.get("/api/display/modes")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["modes"] == ["1920x1080", "1280x720"]
-        assert data["current"] == "1920x1080@60D"
+        assert len(data["modes"]) == 2
+        assert data["modes"][0]["resolution"] == "1920x1080"
+        assert data["modes"][0]["rates"] == [24, 25, 30, 50, 60]
+        assert data["modes"][1]["resolution"] == "1280x720"
+        assert data["current"] == "1920x1080@30D"
+
+    @patch("pi_decoder.display.get_current_resolution", return_value="3840x2160@30D")
+    @patch("pi_decoder.display.get_available_modes", return_value=["3840x2160", "1920x1080"])
+    @patch("pi_decoder.display.get_pi_model", return_value=4)
+    def test_4k_rates_limited_on_pi4(self, _mock_pi, _mock_modes, _mock_current, client):
+        resp = client.get("/api/display/modes")
+        assert resp.status_code == 200
+        data = resp.json()
+        four_k = data["modes"][0]
+        assert four_k["resolution"] == "3840x2160"
+        assert four_k["rates"] == [24, 25, 30]
+        full_hd = data["modes"][1]
+        assert full_hd["rates"] == [24, 25, 30, 50, 60]
 
 
 class TestDisplayResolution:
@@ -865,6 +891,15 @@ class TestDisplayResolution:
         data = resp.json()
         assert data["ok"] is False
         assert "Invalid resolution" in data["error"]
+
+    def test_set_resolution_120hz_rejected(self, client):
+        resp = client.post("/api/display/resolution", json={
+            "resolution": "1920x1080@120D",
+        })
+        assert resp.status_code == 400
+        data = resp.json()
+        assert data["ok"] is False
+        assert "Unsupported refresh rate" in data["error"]
 
     @patch("pi_decoder.display.set_display_resolution", new_callable=AsyncMock,
            side_effect=RuntimeError("cmdline.txt not found"))

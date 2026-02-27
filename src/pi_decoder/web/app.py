@@ -135,6 +135,7 @@ class CaptivePortalMiddleware(BaseHTTPMiddleware):
                 if self._cached_info.get("hotspot_active"):
                     return RedirectResponse(
                         url=f"http://{self._cached_info.get('ip', '10.42.0.1')}/",
+                        status_code=302,
                     )
             except Exception:
                 pass
@@ -642,10 +643,10 @@ def create_app(
     async def api_network_wifi_scan():
         from pi_decoder.network import scan_wifi
         try:
-            networks = await scan_wifi()
+            networks, hotspot_mode = await scan_wifi()
         except Exception as e:
             return JSONResponse({"ok": False, "error": f"WiFi scan failed: {e}"}, 500)
-        return {"networks": networks}
+        return {"networks": networks, "hotspot_mode": hotspot_mode}
 
     @app.post("/api/network/wifi-connect")
     async def api_network_wifi_connect(request: Request):
@@ -858,10 +859,15 @@ def create_app(
 
     @app.get("/api/display/modes")
     async def api_display_modes():
-        from pi_decoder.display import get_available_modes, get_current_resolution
+        from pi_decoder.display import get_available_modes, get_current_resolution, get_refresh_rates_for_resolution, get_pi_model
         modes = get_available_modes()
         current = get_current_resolution()
-        return {"modes": modes, "current": current}
+        pi_model = get_pi_model()
+        structured = [
+            {"resolution": m, "rates": get_refresh_rates_for_resolution(m, pi_model)}
+            for m in modes
+        ]
+        return {"modes": structured, "current": current}
 
     @app.post("/api/display/resolution")
     async def api_display_resolution(request: Request):
@@ -871,12 +877,12 @@ def create_app(
         if not resolution:
             return JSONResponse({"ok": False, "error": "Resolution is required"}, 400)
         # Tightened validation: check ranges and known refresh rates
-        _valid_rates = {24, 25, 30, 50, 60, 120}
+        _valid_rates = {24, 25, 30, 50, 60}
         _m = _re.match(r'^(\d+)x(\d+)(?:@(\d+)(D)?)?$', resolution)
         if not _m:
             return JSONResponse({"ok": False, "error": f"Invalid resolution format: {resolution}"}, 400)
         _w, _h = int(_m.group(1)), int(_m.group(2))
-        _rate = int(_m.group(3)) if _m.group(3) else 60
+        _rate = int(_m.group(3)) if _m.group(3) else 30
         if not (320 <= _w <= 7680 and 240 <= _h <= 4320):
             return JSONResponse({"ok": False, "error": f"Resolution out of range: {_w}x{_h}"}, 400)
         if _rate not in _valid_rates:

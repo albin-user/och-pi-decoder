@@ -91,7 +91,7 @@ class NetworkConfig:
 
 @dataclass
 class DisplayConfig:
-    hdmi_resolution: str = "1920x1080@60D"
+    hdmi_resolution: str = "1920x1080@30D"
 
 
 @dataclass
@@ -237,15 +237,15 @@ def validate_config(cfg: Config) -> None:
         cfg.stream.max_resolution = "1080"
 
     # HDMI resolution validation — tightened ranges and known refresh rates
-    _valid_refresh = {24, 25, 30, 50, 60, 120}
+    _valid_refresh = {24, 25, 30, 50, 60}
     _hdmi_m = re.match(r'^(\d+)x(\d+)(?:@(\d+)(D)?)?$', cfg.display.hdmi_resolution)
     if _hdmi_m:
         _w, _h = int(_hdmi_m.group(1)), int(_hdmi_m.group(2))
-        _rate = int(_hdmi_m.group(3)) if _hdmi_m.group(3) else 60
+        _rate = int(_hdmi_m.group(3)) if _hdmi_m.group(3) else 30
         if not (320 <= _w <= 7680 and 240 <= _h <= 4320 and _rate in _valid_refresh):
-            cfg.display.hdmi_resolution = "1920x1080@60D"
+            cfg.display.hdmi_resolution = "1920x1080@30D"
     else:
-        cfg.display.hdmi_resolution = "1920x1080@60D"
+        cfg.display.hdmi_resolution = "1920x1080@30D"
 
     # Static IP validation
     _validate_static_ip(cfg.network, "eth")

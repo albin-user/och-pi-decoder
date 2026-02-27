@@ -10,6 +10,8 @@ import pytest
 from pi_decoder.display import (
     get_available_modes,
     get_current_resolution,
+    get_pi_model,
+    get_refresh_rates_for_resolution,
     set_display_resolution,
     _FALLBACK_MODES,
 )
@@ -59,6 +61,56 @@ class TestGetAvailableModes:
 
         assert "1920x1080" in modes
         assert "1280x720" in modes
+
+
+class TestGetPiModel:
+    def test_detects_pi5(self, tmp_path):
+        model_file = tmp_path / "model"
+        model_file.write_text("Raspberry Pi 5 Model B Rev 1.0\x00")
+        with patch("pi_decoder.display._PI_MODEL_PATH", model_file):
+            assert get_pi_model() == 5
+
+    def test_detects_pi4(self, tmp_path):
+        model_file = tmp_path / "model"
+        model_file.write_text("Raspberry Pi 4 Model B Rev 1.4\x00")
+        with patch("pi_decoder.display._PI_MODEL_PATH", model_file):
+            assert get_pi_model() == 4
+
+    def test_falls_back_to_4_on_missing(self, tmp_path):
+        missing = tmp_path / "nonexistent"
+        with patch("pi_decoder.display._PI_MODEL_PATH", missing):
+            assert get_pi_model() == 4
+
+    def test_falls_back_to_4_on_unknown(self, tmp_path):
+        model_file = tmp_path / "model"
+        model_file.write_text("Some Other Device")
+        with patch("pi_decoder.display._PI_MODEL_PATH", model_file):
+            assert get_pi_model() == 4
+
+
+class TestGetRefreshRatesForResolution:
+    def test_1080p_gets_all_rates(self):
+        rates = get_refresh_rates_for_resolution("1920x1080", pi_model=4)
+        assert rates == [24, 25, 30, 50, 60]
+
+    def test_4k_pi4_limited(self):
+        rates = get_refresh_rates_for_resolution("3840x2160", pi_model=4)
+        assert rates == [24, 25, 30]
+
+    def test_4k_pi5_all_rates(self):
+        rates = get_refresh_rates_for_resolution("3840x2160", pi_model=5)
+        assert rates == [24, 25, 30, 50, 60]
+
+    def test_720p_gets_all_rates(self):
+        rates = get_refresh_rates_for_resolution("1280x720", pi_model=4)
+        assert rates == [24, 25, 30, 50, 60]
+
+    def test_auto_detects_pi_model(self, tmp_path):
+        model_file = tmp_path / "model"
+        model_file.write_text("Raspberry Pi 4 Model B Rev 1.4\x00")
+        with patch("pi_decoder.display._PI_MODEL_PATH", model_file):
+            rates = get_refresh_rates_for_resolution("3840x2160")
+        assert rates == [24, 25, 30]
 
 
 class TestGetCurrentResolution:

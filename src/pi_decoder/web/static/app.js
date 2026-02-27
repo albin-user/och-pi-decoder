@@ -968,6 +968,38 @@
   // ── HDMI display modes ─────────────────────────────────────────────
 
   var _displayModesLoaded = false;
+  var _displayModeData = [];
+
+  function updateRefreshRates(selectedRes, preferredRate) {
+    var rateSel = _el.hdmiRefreshRate;
+    if (!rateSel) return;
+    var rates = [];
+    for (var i = 0; i < _displayModeData.length; i++) {
+      if (_displayModeData[i].resolution === selectedRes) {
+        rates = _displayModeData[i].rates || [];
+        break;
+      }
+    }
+    if (!rates.length) rates = [24, 25, 30, 50, 60];
+    // Sort descending (60, 50, 30, 25, 24)
+    rates = rates.slice().sort(function (a, b) { return b - a; });
+    rateSel.innerHTML = "";
+    var found = false;
+    rates.forEach(function (r) {
+      var opt = document.createElement("option");
+      opt.value = String(r);
+      opt.textContent = r + " Hz";
+      if (String(r) === String(preferredRate)) {
+        opt.selected = true;
+        found = true;
+      }
+      rateSel.appendChild(opt);
+    });
+    // If preferred rate not available, select highest (first)
+    if (!found && rateSel.options.length) {
+      rateSel.options[0].selected = true;
+    }
+  }
 
   function loadDisplayModes() {
     if (_displayModesLoaded) return;
@@ -979,7 +1011,7 @@
 
       // Parse current resolution and refresh rate
       var curRes = "";
-      var curRate = "60";
+      var curRate = "30";
       if (current) {
         var atIdx = current.indexOf("@");
         if (atIdx >= 0) {
@@ -990,26 +1022,28 @@
         }
       }
 
+      // Store structured mode data for rate lookup
+      _displayModeData = modes;
+
       sel.innerHTML = "";
-      if (!modes.length) modes = ["1920x1080", "1280x720", "720x480"];
+      if (!modes.length) modes = [{ resolution: "1920x1080", rates: [24, 25, 30, 50, 60] }];
       modes.forEach(function (m) {
+        var res = m.resolution || m;
         var opt = document.createElement("option");
-        opt.value = m;
-        opt.textContent = m;
-        if (m === curRes) opt.selected = true;
+        opt.value = res;
+        opt.textContent = res;
+        if (res === curRes) opt.selected = true;
         sel.appendChild(opt);
       });
 
-      // Set refresh rate dropdown
-      var rateSel = _el.hdmiRefreshRate;
-      if (rateSel && curRate) {
-        for (var i = 0; i < rateSel.options.length; i++) {
-          if (rateSel.options[i].value === curRate) {
-            rateSel.selectedIndex = i;
-            break;
-          }
-        }
-      }
+      // Wire resolution change to update refresh rates
+      sel.addEventListener("change", function () {
+        var currentRate = _el.hdmiRefreshRate ? _el.hdmiRefreshRate.value : "";
+        updateRefreshRates(sel.value, currentRate);
+      });
+
+      // Initialize refresh rate dropdown from current config
+      updateRefreshRates(sel.value, curRate);
 
       _displayModesLoaded = true;
     }).catch(function () {});
@@ -1079,6 +1113,10 @@
       btnText.textContent = "Scan for Networks";
       spinner.style.display = "none";
       btn.disabled = false;
+      if (d.hotspot_mode) {
+        list.innerHTML = '<div class="help" style="padding:12px">WiFi scanning is unavailable while in hotspot mode. Enter the network name and password manually below.</div>';
+        return;
+      }
       var networks = d.networks || [];
       if (!networks.length) {
         list.innerHTML = '<div class="help" style="padding:12px">No networks found. Try scanning again.</div>';
