@@ -1113,13 +1113,13 @@
       btnText.textContent = "Scan for Networks";
       spinner.style.display = "none";
       btn.disabled = false;
-      if (d.hotspot_mode) {
-        list.innerHTML = '<div class="help" style="padding:12px">WiFi scanning is unavailable while in hotspot mode. Enter the network name and password manually below.</div>';
-        return;
-      }
       var networks = d.networks || [];
       if (!networks.length) {
-        list.innerHTML = '<div class="help" style="padding:12px">No networks found. Try scanning again.</div>';
+        if (d.hotspot_mode) {
+          list.innerHTML = '<div class="help" style="padding:12px">No cached networks available in hotspot mode. Enter the network name and password manually below.</div>';
+        } else {
+          list.innerHTML = '<div class="help" style="padding:12px">No networks found. Try scanning again.</div>';
+        }
         return;
       }
       var html = "";

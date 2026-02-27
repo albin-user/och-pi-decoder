@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import socket
 import time
 from importlib.metadata import version as pkg_version
@@ -284,12 +285,20 @@ class MpvManager:
         result["using_backup"] = self._using_backup
         return result
 
+    def _overlay_resolution(self) -> tuple[int, int]:
+        """Parse overlay resolution from the configured HDMI resolution."""
+        m = re.match(r'^(\d+)x(\d+)', self._config.display.hdmi_resolution)
+        if m:
+            return int(m.group(1)), int(m.group(2))
+        return 1920, 1080
+
     async def set_overlay(self, overlay_id: int, ass_text: str) -> None:
         """Push an ASS overlay using osd-overlay with explicit resolution."""
+        res_x, res_y = self._overlay_resolution()
         await self._send(
             ["osd-overlay"],
             id=overlay_id, format="ass-events", data=ass_text,
-            res_x=1920, res_y=1080,
+            res_x=res_x, res_y=res_y,
         )
         if not self._overlay_confirmed:
             self._overlay_confirmed = True

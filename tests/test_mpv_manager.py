@@ -257,6 +257,22 @@ class TestOverlayCommands:
             res_x=1920, res_y=1080,
         )
 
+    async def test_set_overlay_uses_config_resolution(self):
+        cfg = _make_config(**{"display.hdmi_resolution": "3840x2160@30D"})
+        mgr = _make_manager(cfg)
+        mgr._send = AsyncMock()
+        await mgr.set_overlay(42, r"{\an7\fs22}Hello")
+        mgr._send.assert_awaited_once_with(
+            ["osd-overlay"],
+            id=42, format="ass-events", data=r"{\an7\fs22}Hello",
+            res_x=3840, res_y=2160,
+        )
+
+    async def test_overlay_resolution_fallback(self):
+        cfg = _make_config(**{"display.hdmi_resolution": "invalid"})
+        mgr = _make_manager(cfg)
+        assert mgr._overlay_resolution() == (1920, 1080)
+
     async def test_remove_overlay(self):
         mgr = _make_manager()
         mgr._send = AsyncMock()

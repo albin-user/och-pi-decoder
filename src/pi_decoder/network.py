@@ -153,29 +153,28 @@ async def get_network_status() -> dict:
 async def scan_wifi() -> tuple[list[dict], bool]:
     """Scan for WiFi networks. Returns (networks, hotspot_mode).
 
-    When in hotspot mode the radio cannot scan, so returns an empty list
-    and hotspot_mode=True so the caller can inform the user.
+    When in hotspot mode, a live rescan is not possible but cached results
+    from before the hotspot started may still be available via wifi list.
+    The hotspot_mode flag tells the UI to show a notice about limited results.
     """
-    # Check if hotspot is active — scanning is impossible in AP mode
     status = await asyncio.to_thread(get_network_info_sync)
-    if status.get("hotspot_active"):
-        log.warning("WiFi scan skipped: hotspot is active (AP mode)")
-        return [], True
+    hotspot_mode = bool(status.get("hotspot_active"))
 
     try:
-        # Force a rescan
-        try:
-            await _run_nmcli("device", "wifi", "rescan")
-        except Exception:
-            pass  # rescan may fail if already scanning
-        await asyncio.sleep(2)
+        # Force a rescan (silently fails in AP mode — that's expected)
+        if not hotspot_mode:
+            try:
+                await _run_nmcli("device", "wifi", "rescan")
+            except Exception:
+                pass  # rescan may fail if already scanning
+            await asyncio.sleep(2)
 
         output = await _run_nmcli(
             "-t", "-f", "SSID,SIGNAL,SECURITY,IN-USE", "device", "wifi", "list",
         )
     except Exception:
         log.debug("WiFi scan failed", exc_info=True)
-        return [], False
+        return [], hotspot_mode
 
     seen: dict[str, dict] = {}
     for line in output.strip().splitlines():
@@ -202,7 +201,7 @@ async def scan_wifi() -> tuple[list[dict], bool]:
                 "in_use": in_use,
             }
 
-    return sorted(seen.values(), key=lambda x: x["signal"], reverse=True), False
+    return sorted(seen.values(), key=lambda x: x["signal"], reverse=True), hotspot_mode
 
 
 async def connect_wifi(ssid: str, password: str) -> str:

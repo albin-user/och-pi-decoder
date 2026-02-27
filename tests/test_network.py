@@ -164,10 +164,24 @@ class TestScanWifi:
         assert result[0]["ssid"] == "GoodNetwork"
 
     @pytest.mark.asyncio
-    async def test_scan_returns_hotspot_mode_when_active(self):
+    async def test_scan_returns_hotspot_mode_with_cached_results(self):
+        """In hotspot mode, scan skips rescan but returns cached wifi list results."""
+        cached_output = "CachedNetwork:70:WPA2:\n"
         hotspot_info = {"hotspot_active": True, "ssid": "Decoder"}
         with patch("pi_decoder.network.get_network_info_sync", return_value=hotspot_info):
-            result, hotspot_mode = await network.scan_wifi()
+            with patch("pi_decoder.network._run_nmcli", new_callable=AsyncMock, return_value=cached_output):
+                result, hotspot_mode = await network.scan_wifi()
+        assert hotspot_mode is True
+        assert len(result) == 1
+        assert result[0]["ssid"] == "CachedNetwork"
+
+    @pytest.mark.asyncio
+    async def test_scan_hotspot_mode_empty_list(self):
+        """In hotspot mode with no cached results, returns empty list."""
+        hotspot_info = {"hotspot_active": True, "ssid": "Decoder"}
+        with patch("pi_decoder.network.get_network_info_sync", return_value=hotspot_info):
+            with patch("pi_decoder.network._run_nmcli", new_callable=AsyncMock, return_value=""):
+                result, hotspot_mode = await network.scan_wifi()
         assert result == []
         assert hotspot_mode is True
 
