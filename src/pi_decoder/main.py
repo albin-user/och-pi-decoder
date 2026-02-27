@@ -61,8 +61,16 @@ async def async_main() -> None:
 
     asyncio.create_task(_cec_startup())
 
+    # Auto-stop hotspot when ethernet is plugged in
+    from pi_decoder.network import monitor_hotspot_auto_stop
+    asyncio.create_task(monitor_hotspot_auto_stop())
+
     # Start mpv
     await mpv.start()
+
+    # Re-enforce HDMI resolution on hotplug (e.g. 4K TV unplugged/replugged)
+    from pi_decoder.display import monitor_hdmi_hotplug
+    asyncio.create_task(monitor_hdmi_hotplug(mpv.restart))
 
     # Start overlay loop
     if overlay:

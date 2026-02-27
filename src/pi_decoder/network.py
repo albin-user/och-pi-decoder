@@ -21,9 +21,9 @@ _TIMEOUT = 15  # seconds
 
 
 async def _run_nmcli(*args: str) -> str:
-    """Run an nmcli command and return stdout."""
+    """Run an nmcli command via sudo and return stdout."""
     proc = await asyncio.create_subprocess_exec(
-        "nmcli", *args,
+        "sudo", "nmcli", *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -206,56 +206,62 @@ async def scan_wifi() -> tuple[list[dict], bool]:
 
 async def connect_wifi(ssid: str, password: str) -> str:
     """Connect to a WiFi network. Stops hotspot first if active."""
+    from pi_decoder.fsutil import writable
+
     # Stop hotspot if it's running
     status = await get_network_status()
     if status.get("hotspot_active"):
         await stop_hotspot()
         await asyncio.sleep(2)
 
-    try:
-        output = await _run_nmcli(
-            "device", "wifi", "connect", ssid, "password", password,
-        )
-        log.info("WiFi connect to %s: %s", ssid, output.strip())
-        return output.strip()
-    except RuntimeError as e:
-        # Try with existing saved connection
+    with writable("/"):
         try:
-            output = await _run_nmcli("connection", "up", ssid)
+            output = await _run_nmcli(
+                "device", "wifi", "connect", ssid, "password", password,
+            )
+            log.info("WiFi connect to %s: %s", ssid, output.strip())
             return output.strip()
-        except Exception:
-            raise e
+        except RuntimeError as e:
+            # Try with existing saved connection
+            try:
+                output = await _run_nmcli("connection", "up", ssid)
+                return output.strip()
+            except Exception:
+                raise e
 
 
 async def start_hotspot(ssid: str = "Decoder", password: str = "decodersetup") -> str:
     """Start WiFi hotspot with built-in DHCP."""
-    try:
-        # Delete existing hotspot connection if any
-        try:
-            await _run_nmcli("connection", "delete", "Hotspot")
-        except Exception:
-            pass
+    from pi_decoder.fsutil import writable
 
-        output = await _run_nmcli(
-            "device", "wifi", "hotspot",
-            "ifname", "wlan0",
-            "ssid", ssid,
-            "password", password,
-        )
-        # Configure DNS to point to self for captive portal
+    with writable("/"):
         try:
-            await _run_nmcli(
-                "connection", "modify", "Hotspot",
-                "ipv4.dns", "10.42.0.1",
+            # Delete existing hotspot connection if any
+            try:
+                await _run_nmcli("connection", "delete", "Hotspot")
+            except Exception:
+                pass
+
+            output = await _run_nmcli(
+                "device", "wifi", "hotspot",
+                "ifname", "wlan0",
+                "ssid", ssid,
+                "password", password,
             )
-        except Exception:
-            pass
+            # Configure DNS to point to self for captive portal
+            try:
+                await _run_nmcli(
+                    "connection", "modify", "Hotspot",
+                    "ipv4.dns", "10.42.0.1",
+                )
+            except Exception:
+                log.warning("Failed to set hotspot DNS for captive portal", exc_info=True)
 
-        log.info("Hotspot started: SSID=%s", ssid)
-        return output.strip()
-    except Exception:
-        log.exception("Failed to start hotspot")
-        raise
+            log.info("Hotspot started: SSID=%s", ssid)
+            return output.strip()
+        except Exception:
+            log.exception("Failed to start hotspot")
+            raise
 
 
 async def stop_hotspot() -> str:
@@ -289,29 +295,29 @@ async def get_saved_networks() -> list[str]:
 
 
 async def forget_network(name: str) -> str:
-    """Delete a saved WiFi connection.
+    """Delete a saved WiFi connection."""
+    from pi_decoder.fsutil import writable
 
-    Uses sudo because connections created by the root-owned boot script
-    are system-owned and the pi user lacks polkit permission to delete them.
-    """
-    proc = await asyncio.create_subprocess_exec(
-        "sudo", "nmcli", "connection", "delete", name,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    try:
-        stdout, stderr = await asyncio.wait_for(
-            proc.communicate(), timeout=_TIMEOUT,
-        )
-        if proc.returncode != 0:
-            err = stderr.decode(errors="replace").strip()
-            raise RuntimeError(f"nmcli failed (rc={proc.returncode}): {err}")
-        log.info("Forgot network: %s", name)
-        return stdout.decode(errors="replace").strip()
-    except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
-        raise TimeoutError("nmcli timed out")
+    with writable("/"):
+        result = await _run_nmcli("connection", "delete", name)
+    log.info("Forgot network: %s", name)
+    return result.strip()
+
+
+# ── Hotspot auto-stop on Ethernet ─────────────────────────────────
+
+
+async def monitor_hotspot_auto_stop(interval: float = 5.0) -> None:
+    """Background task: auto-stop hotspot when ethernet connects."""
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            info = await asyncio.to_thread(get_network_info_sync)
+            if info.get("hotspot_active") and info.get("connection_type") == "ethernet":
+                log.info("Ethernet connected — auto-stopping hotspot")
+                await stop_hotspot()
+        except Exception:
+            log.debug("Hotspot monitor check failed", exc_info=True)
 
 
 # ── Static IP management ─────────────────────────────────────────
@@ -358,30 +364,33 @@ async def apply_static_ip(
     if not conn:
         raise RuntimeError(f"No active {interface_type} connection")
 
-    if mode == "manual":
-        # Convert comma-separated DNS to space-separated for nmcli
-        dns_nmcli = " ".join(d.strip() for d in dns.split(",") if d.strip()) if dns else ""
-        # Fall back to gateway as DNS if no DNS specified
-        if not dns_nmcli and gateway:
-            dns_nmcli = gateway
-        await _run_nmcli(
-            "connection", "modify", conn,
-            "ipv4.method", "manual",
-            "ipv4.addresses", address,
-            "ipv4.gateway", gateway or "",
-            "ipv4.dns", dns_nmcli or "",
-        )
-    else:
-        await _run_nmcli(
-            "connection", "modify", conn,
-            "ipv4.method", "auto",
-            "ipv4.addresses", "",
-            "ipv4.gateway", "",
-            "ipv4.dns", "",
-        )
+    from pi_decoder.fsutil import writable
 
-    # Re-apply the connection to activate changes
-    await _run_nmcli("connection", "up", conn)
+    with writable("/"):
+        if mode == "manual":
+            # Convert comma-separated DNS to space-separated for nmcli
+            dns_nmcli = " ".join(d.strip() for d in dns.split(",") if d.strip()) if dns else ""
+            # Fall back to gateway as DNS if no DNS specified
+            if not dns_nmcli and gateway:
+                dns_nmcli = gateway
+            await _run_nmcli(
+                "connection", "modify", conn,
+                "ipv4.method", "manual",
+                "ipv4.addresses", address,
+                "ipv4.gateway", gateway or "",
+                "ipv4.dns", dns_nmcli or "",
+            )
+        else:
+            await _run_nmcli(
+                "connection", "modify", conn,
+                "ipv4.method", "auto",
+                "ipv4.addresses", "",
+                "ipv4.gateway", "",
+                "ipv4.dns", "",
+            )
+
+        # Re-apply the connection to activate changes
+        await _run_nmcli("connection", "up", conn)
     return f"IP {mode} applied to {conn}"
 
 
@@ -498,8 +507,11 @@ async def run_speed_test() -> dict:
 
         # Persist to disk
         try:
-            SPEEDTEST_RESULT_PATH.parent.mkdir(parents=True, exist_ok=True)
-            SPEEDTEST_RESULT_PATH.write_text(json.dumps(result))
+            from pi_decoder.fsutil import writable
+
+            with writable("/"):
+                SPEEDTEST_RESULT_PATH.parent.mkdir(parents=True, exist_ok=True)
+                SPEEDTEST_RESULT_PATH.write_text(json.dumps(result))
         except Exception:
             log.warning("Could not save speed test result", exc_info=True)
 

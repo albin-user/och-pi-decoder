@@ -79,14 +79,17 @@ done
 
 echo "[pi-decoder-network] No WiFi. Starting hotspot: SSID=${HOTSPOT_SSID}"
 
-# Step 3: Start hotspot
+# Step 3: Start hotspot (remount rw for NM connection files on read-only root)
+mount -o remount,rw / 2>/dev/null || true
 nmcli connection delete Hotspot 2>/dev/null || true
 nmcli device wifi hotspot ifname wlan0 ssid "$HOTSPOT_SSID" password "$HOTSPOT_PASS" || {
+    sync && mount -o remount,ro / 2>/dev/null || true
     echo "[pi-decoder-network] Failed to start hotspot."
     exit 1
 }
 
 # Configure DNS to point to self (captive portal)
 nmcli connection modify Hotspot ipv4.dns 10.42.0.1 2>/dev/null || true
+sync && mount -o remount,ro / 2>/dev/null || true
 
 echo "[pi-decoder-network] Hotspot active at 10.42.0.1"

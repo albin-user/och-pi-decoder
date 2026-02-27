@@ -23,8 +23,8 @@ KillMode=mixed
 # Allow binding to port 80
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 # Security hardening (NoNewPrivileges omitted — sudo needed for reboot/restart)
-ProtectSystem=strict
-ReadWritePaths=/etc/pi-decoder /tmp /opt/pi-decoder/venv /boot/firmware /boot
+# ProtectSystem removed — read-only root provides equivalent protection system-wide,
+# and ProtectSystem=strict creates a private mount namespace that prevents remount,rw.
 ProtectHome=tmpfs
 
 [Install]

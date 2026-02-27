@@ -1,5 +1,7 @@
 """Shared pytest fixtures."""
 
+from unittest.mock import patch
+
 import pytest
 from pathlib import Path
 
@@ -38,3 +40,20 @@ def pco_config():
     cfg.pco.secret = "test_secret"
     cfg.pco.service_type_id = "12345"
     return cfg
+
+
+@pytest.fixture(autouse=True)
+def mock_fsutil_writable():
+    """Make writable() a no-op in all tests.
+
+    Patches the writable context manager itself rather than platform.system,
+    so tests that mock platform.system (e.g. display tests) don't interfere.
+    """
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _noop_writable(mount_point="/"):
+        yield
+
+    with patch("pi_decoder.fsutil.writable", _noop_writable):
+        yield

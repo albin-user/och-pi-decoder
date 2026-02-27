@@ -834,6 +834,41 @@ class TestStreamMaxResolution:
         assert config.stream.max_resolution == "best"
 
 
+class TestCaptivePortalMiddleware:
+    """Captive portal should return 200 HTML (not 302) when hotspot is active."""
+
+    @patch("pi_decoder.network.get_network_info_sync", return_value={
+        "hotspot_active": True, "ip": "10.42.0.1",
+    })
+    def test_apple_probe_hotspot_active_returns_200_html(self, _mock_net, client):
+        resp = client.get("/hotspot-detect.html", headers={"host": "captive.apple.com"})
+        assert resp.status_code == 200
+        assert "text/html" in resp.headers["content-type"]
+        assert "meta http-equiv" in resp.text
+        assert "10.42.0.1" in resp.text
+
+    @patch("pi_decoder.network.get_network_info_sync", return_value={
+        "hotspot_active": True, "ip": "10.42.0.1",
+    })
+    def test_google_probe_hotspot_active_returns_200_html(self, _mock_net, client):
+        resp = client.get("/generate_204", headers={"host": "connectivitycheck.gstatic.com"})
+        assert resp.status_code == 200
+        assert "text/html" in resp.headers["content-type"]
+
+    @patch("pi_decoder.network.get_network_info_sync", return_value={
+        "hotspot_active": False, "ip": "192.168.1.100",
+    })
+    def test_apple_probe_hotspot_not_active_passes_through(self, _mock_net, client):
+        resp = client.get("/hotspot-detect.html", headers={"host": "captive.apple.com"})
+        # Should pass through to app (404 since no such route)
+        assert resp.status_code == 404
+
+    def test_normal_host_passes_through(self, client):
+        resp = client.get("/api/health", headers={"host": "10.42.0.1"})
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "ok"}
+
+
 class TestDisplayModes:
     @patch("pi_decoder.display.get_current_resolution", return_value="1920x1080@30D")
     @patch("pi_decoder.display.get_available_modes", return_value=["1920x1080", "1280x720"])
@@ -900,6 +935,18 @@ class TestDisplayResolution:
         data = resp.json()
         assert data["ok"] is False
         assert "Unsupported refresh rate" in data["error"]
+
+    @patch("pi_decoder.display.get_pi_model", return_value=4)
+    @patch("pi_decoder.display.get_refresh_rates_for_resolution", return_value=[24, 25, 30])
+    def test_4k_60_rejected_on_pi4(self, _mock_rates, _mock_model, client):
+        resp = client.post("/api/display/resolution", json={
+            "resolution": "3840x2160@60D",
+        })
+        assert resp.status_code == 400
+        data = resp.json()
+        assert data["ok"] is False
+        assert "not supported" in data["error"]
+        assert "3840x2160" in data["error"]
 
     @patch("pi_decoder.display.set_display_resolution", new_callable=AsyncMock,
            side_effect=RuntimeError("cmdline.txt not found"))

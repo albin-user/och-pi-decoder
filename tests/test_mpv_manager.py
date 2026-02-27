@@ -562,6 +562,64 @@ class TestBuildIdleOverlay:
         assert "Password:" not in result
 
 
+# ── _drm_mode ────────────────────────────────────────────────────────────
+
+
+class TestDrmMode:
+    @patch("platform.system", return_value="Linux")
+    def test_parses_standard_resolution(self, _mock):
+        cfg = _make_config(**{"display.hdmi_resolution": "1920x1080@30D"})
+        mgr = MpvManager(cfg)
+        assert mgr._drm_mode() == "1920x1080@30"
+
+    @patch("platform.system", return_value="Linux")
+    def test_parses_4k_resolution(self, _mock):
+        cfg = _make_config(**{"display.hdmi_resolution": "3840x2160@24D"})
+        mgr = MpvManager(cfg)
+        assert mgr._drm_mode() == "3840x2160@24"
+
+    @patch("platform.system", return_value="Linux")
+    def test_parses_without_d_suffix(self, _mock):
+        cfg = _make_config(**{"display.hdmi_resolution": "1280x720@60"})
+        mgr = MpvManager(cfg)
+        assert mgr._drm_mode() == "1280x720@60"
+
+    @patch("platform.system", return_value="Darwin")
+    def test_returns_none_on_non_linux(self, _mock):
+        mgr = _make_manager()
+        assert mgr._drm_mode() is None
+
+    @patch("platform.system", return_value="Linux")
+    def test_returns_none_on_invalid_format(self, _mock):
+        cfg = _make_config(**{"display.hdmi_resolution": "invalid"})
+        mgr = MpvManager(cfg)
+        assert mgr._drm_mode() is None
+
+    @patch("platform.system", return_value="Linux")
+    @patch("pi_decoder.mpv_manager._find_drm_device", return_value="/dev/dri/card1")
+    @patch("pi_decoder.mpv_manager.Path")
+    @patch("asyncio.create_subprocess_exec", new_callable=AsyncMock)
+    @patch("asyncio.sleep", new_callable=AsyncMock)
+    async def test_start_includes_drm_mode(
+        self, mock_sleep, mock_exec, mock_path_cls, mock_drm_dev, _mock_plat
+    ):
+        cfg = _make_config(**{"display.hdmi_resolution": "1920x1080@30D"})
+        mgr = MpvManager(cfg)
+        mock_proc = MagicMock()
+        mock_proc.returncode = None
+        mock_exec.return_value = mock_proc
+        mgr._connect_ipc = AsyncMock()
+        mock_path_cls.return_value.exists.return_value = True
+
+        with patch("asyncio.create_task") as mock_task:
+            mock_task.return_value = MagicMock(done=MagicMock(return_value=False))
+            await mgr.start()
+
+        call_args = mock_exec.call_args[0]
+        assert "--drm-mode=1920x1080@30" in call_args
+        assert "--drm-device=/dev/dri/card1" in call_args
+
+
 # ── ytdl_format ──────────────────────────────────────────────────────────
 
 

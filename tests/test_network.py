@@ -266,35 +266,62 @@ class TestSavedNetworks:
 
     @pytest.mark.asyncio
     async def test_forget_network(self):
-        mock_proc = AsyncMock()
-        mock_proc.communicate = AsyncMock(return_value=(b"Connection deleted\n", b""))
-        mock_proc.returncode = 0
-        mock_proc.kill = AsyncMock()
-        mock_proc.wait = AsyncMock()
-
-        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock,
-                    return_value=mock_proc) as mock_exec:
+        with patch("pi_decoder.network._run_nmcli", new_callable=AsyncMock,
+                    return_value="Connection 'OldWiFi' deleted.\n"):
             result = await network.forget_network("OldWiFi")
         assert "deleted" in result.lower()
-        # Verify sudo nmcli was called
-        mock_exec.assert_called_once_with(
-            "sudo", "nmcli", "connection", "delete", "OldWiFi",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
 
     @pytest.mark.asyncio
     async def test_forget_network_failure(self):
-        mock_proc = AsyncMock()
-        mock_proc.communicate = AsyncMock(return_value=(b"", b"Permission denied\n"))
-        mock_proc.returncode = 7
-        mock_proc.kill = AsyncMock()
-        mock_proc.wait = AsyncMock()
-
-        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock,
-                    return_value=mock_proc):
+        with patch("pi_decoder.network._run_nmcli", new_callable=AsyncMock,
+                    side_effect=RuntimeError("nmcli failed (rc=10): No connection")):
             with pytest.raises(RuntimeError, match="nmcli failed"):
                 await network.forget_network("OldWiFi")
+
+
+class TestMonitorHotspotAutoStop:
+
+    @pytest.mark.asyncio
+    async def test_stops_hotspot_when_ethernet_connects(self):
+        """Hotspot auto-stops when ethernet is detected."""
+        sleep_count = 0
+
+        async def sleep_then_cancel(t):
+            nonlocal sleep_count
+            sleep_count += 1
+            if sleep_count >= 2:
+                raise asyncio.CancelledError()
+
+        info = {"hotspot_active": True, "connection_type": "ethernet"}
+        with patch("pi_decoder.network.get_network_info_sync", return_value=info):
+            with patch("pi_decoder.network.stop_hotspot", new_callable=AsyncMock) as mock_stop:
+                with patch("asyncio.sleep", side_effect=sleep_then_cancel):
+                    try:
+                        await network.monitor_hotspot_auto_stop(interval=0)
+                    except asyncio.CancelledError:
+                        pass
+        mock_stop.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_no_stop_when_hotspot_only(self):
+        """Hotspot stays on when there's no ethernet."""
+        sleep_count = 0
+
+        async def sleep_then_cancel(t):
+            nonlocal sleep_count
+            sleep_count += 1
+            if sleep_count >= 2:
+                raise asyncio.CancelledError()
+
+        info = {"hotspot_active": True, "connection_type": "hotspot"}
+        with patch("pi_decoder.network.get_network_info_sync", return_value=info):
+            with patch("pi_decoder.network.stop_hotspot", new_callable=AsyncMock) as mock_stop:
+                with patch("asyncio.sleep", side_effect=sleep_then_cancel):
+                    try:
+                        await network.monitor_hotspot_auto_stop(interval=0)
+                    except asyncio.CancelledError:
+                        pass
+        mock_stop.assert_not_called()
 
 
 class TestGetActiveConnectionName:

@@ -142,15 +142,83 @@ async def set_display_resolution(resolution: str) -> None:
     # Append new parameter
     content = content.strip() + f" video=HDMI-A-1:{resolution}"
 
-    proc = await asyncio.create_subprocess_exec(
-        "sudo", "tee", str(cmdline_path),
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    _, stderr = await asyncio.wait_for(proc.communicate(input=content.encode()), timeout=10)
-    if proc.returncode != 0:
-        err = stderr.decode(errors="replace").strip()
-        raise RuntimeError(f"Failed to write cmdline.txt (rc={proc.returncode}): {err}")
+    from pi_decoder.fsutil import writable
+
+    with writable("/boot/firmware"):
+        proc = await asyncio.create_subprocess_exec(
+            "sudo", "tee", str(cmdline_path),
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await asyncio.wait_for(proc.communicate(input=content.encode()), timeout=10)
+        if proc.returncode != 0:
+            err = stderr.decode(errors="replace").strip()
+            raise RuntimeError(f"Failed to write cmdline.txt (rc={proc.returncode}): {err}")
 
     log.info("HDMI resolution set to %s in %s", resolution, cmdline_path)
+
+
+# ── HDMI hotplug monitoring ─────────────────────────────────────────────
+
+_DRM_STATUS_GLOB = "/sys/class/drm/card*-HDMI-A-1/status"
+
+
+def _find_drm_status_path() -> str | None:
+    """Find the sysfs connector status file for HDMI-A-1.
+
+    Returns None on non-Linux or if no HDMI connector is found.
+    """
+    if platform.system() != "Linux":
+        return None
+    import glob as _glob
+    paths = sorted(_glob.glob(_DRM_STATUS_GLOB))
+    return paths[0] if paths else None
+
+
+def _read_drm_status(path: str) -> str:
+    """Read connector status from sysfs. Returns 'connected', 'disconnected', or 'unknown'."""
+    try:
+        return Path(path).read_text().strip()
+    except Exception:
+        return "unknown"
+
+
+async def monitor_hdmi_hotplug(
+    restart_callback,
+    interval: float = 5.0,
+) -> None:
+    """Poll HDMI connector status and restart mpv on hotplug.
+
+    Detects disconnected→connected transitions and calls restart_callback()
+    (typically MpvManager.restart) so mpv re-applies --drm-mode.
+    """
+    status_path = _find_drm_status_path()
+    if status_path is None:
+        log.debug("HDMI hotplug monitor: no connector found (non-Linux?), exiting")
+        return
+
+    prev_status = _read_drm_status(status_path)
+    log.info("HDMI hotplug monitor started (initial status: %s)", prev_status)
+
+    while True:
+        await asyncio.sleep(interval)
+        cur_status = _read_drm_status(status_path)
+
+        if prev_status == "disconnected" and cur_status == "connected":
+            log.info("HDMI hotplug detected: disconnected -> connected")
+            # Wait for EDID negotiation to complete
+            await asyncio.sleep(3.0)
+            # Re-check — monitor may have been unplugged again during wait
+            cur_status = _read_drm_status(status_path)
+            if cur_status != "connected":
+                log.info("HDMI disconnected again during EDID wait, skipping restart")
+                prev_status = cur_status
+                continue
+            log.info("Restarting mpv to enforce configured resolution")
+            try:
+                await restart_callback()
+            except Exception:
+                log.warning("HDMI hotplug restart failed", exc_info=True)
+
+        prev_status = cur_status

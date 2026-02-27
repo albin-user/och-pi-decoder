@@ -303,8 +303,9 @@ def to_dict_safe(cfg: Config) -> dict:
 
 def save_config(cfg: Config, path: str | Path | None = None) -> None:
     """Write Config back to TOML atomically with backup."""
+    from pi_decoder.fsutil import writable
+
     path = Path(path) if path else DEFAULT_CONFIG_PATH
-    path.parent.mkdir(parents=True, exist_ok=True)
 
     data = {
         "general": _section_to_dict(cfg.general),
@@ -316,28 +317,31 @@ def save_config(cfg: Config, path: str | Path | None = None) -> None:
         "display": _section_to_dict(cfg.display),
     }
 
-    # Backup existing config before overwrite
-    if path.exists():
-        try:
-            shutil.copy2(path, path.parent / (path.name + ".bak"))
-        except OSError:
-            log.warning("Could not create config backup")
+    with writable("/"):
+        path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Atomic write: temp file + os.replace
-    tmp_path = path.parent / (path.name + ".tmp")
-    try:
-        with open(tmp_path, "wb") as fp:
-            tomli_w.dump(data, fp)
-        os.replace(tmp_path, path)
-    except Exception:
+        # Backup existing config before overwrite
+        if path.exists():
+            try:
+                shutil.copy2(path, path.parent / (path.name + ".bak"))
+            except OSError:
+                log.warning("Could not create config backup")
+
+        # Atomic write: temp file + os.replace
+        tmp_path = path.parent / (path.name + ".tmp")
         try:
-            tmp_path.unlink(missing_ok=True)
+            with open(tmp_path, "wb") as fp:
+                tomli_w.dump(data, fp)
+            os.replace(tmp_path, path)
+        except Exception:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
+
+        # secure permissions (ignore errors on non-Linux)
+        try:
+            os.chmod(path, 0o600)
         except OSError:
             pass
-        raise
-
-    # secure permissions (ignore errors on non-Linux)
-    try:
-        os.chmod(path, 0o600)
-    except OSError:
-        pass

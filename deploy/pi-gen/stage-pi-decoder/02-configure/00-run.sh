@@ -63,3 +63,45 @@ EOF
 on_chroot << EOF
 raspi-config nonint do_boot_behaviour B2
 EOF
+
+# ── Read-only root filesystem ────────────────────────────────────────
+
+# Switch journal to volatile (tmpfs) — no disk writes for logs
+cat > "${ROOTFS_DIR}/etc/systemd/journald.conf.d/pi-decoder.conf" << 'EOF'
+[Journal]
+Storage=volatile
+RuntimeMaxUse=30M
+MaxRetentionSec=1month
+EOF
+
+# Add tmpfs entries for writable directories
+for entry in \
+    "tmpfs /var/log tmpfs nodev,nosuid,size=30M 0 0" \
+    "tmpfs /var/tmp tmpfs nodev,nosuid,size=10M 0 0" \
+    "tmpfs /var/lib/systemd tmpfs nodev,nosuid,size=5M 0 0"; do
+    mp=$(echo "$entry" | awk '{print $2}')
+    if ! grep -q "tmpfs\s\+${mp}\s" "${ROOTFS_DIR}/etc/fstab"; then
+        echo "$entry" >> "${ROOTFS_DIR}/etc/fstab"
+    fi
+done
+
+# Add 'ro' to root ext4 mount
+if grep -q '^\S\+\s\+/\s\+ext4' "${ROOTFS_DIR}/etc/fstab"; then
+    if ! grep -q '^\S\+\s\+/\s\+ext4\s\+.*\bro\b' "${ROOTFS_DIR}/etc/fstab"; then
+        sed -i 's|^\(\S\+\s\+/\s\+ext4\s\+\)\(\S\+\)|\1\2,ro|' "${ROOTFS_DIR}/etc/fstab"
+    fi
+fi
+
+# Add 'ro' to /boot/firmware vfat mount
+if grep -q '^\S\+\s\+/boot/firmware\s\+vfat' "${ROOTFS_DIR}/etc/fstab"; then
+    if ! grep -q '^\S\+\s\+/boot/firmware\s\+vfat\s\+.*\bro\b' "${ROOTFS_DIR}/etc/fstab"; then
+        sed -i 's|^\(\S\+\s\+/boot/firmware\s\+vfat\s\+\)\(\S\+\)|\1\2,ro|' "${ROOTFS_DIR}/etc/fstab"
+    fi
+fi
+
+# Install dpkg pre/post hooks so unattended-upgrades can still install
+cat > "${ROOTFS_DIR}/etc/apt/apt.conf.d/01-remount-rw" << 'EOF'
+// Remount root rw before dpkg, ro after — allows unattended-upgrades on ro root
+DPkg::Pre-Invoke  { "mount -o remount,rw / 2>/dev/null || true"; };
+DPkg::Post-Invoke { "sync && mount -o remount,ro / 2>/dev/null || true"; };
+EOF

@@ -17,7 +17,7 @@ from pathlib import Path
 
 import psutil
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, UploadFile, File
-from fastapi.responses import HTMLResponse, JSONResponse, Response, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -133,10 +133,15 @@ class CaptivePortalMiddleware(BaseHTTPMiddleware):
                     self._cached_info = await asyncio.to_thread(get_network_info_sync)
                     self._cache_time = now
                 if self._cached_info.get("hotspot_active"):
-                    return RedirectResponse(
-                        url=f"http://{self._cached_info.get('ip', '10.42.0.1')}/",
-                        status_code=302,
+                    ip = self._cached_info.get('ip', '10.42.0.1')
+                    html = (
+                        f'<html><head><title>Pi-Decoder Setup</title>'
+                        f'<meta http-equiv="refresh" content="0;url=http://{ip}/">'
+                        f'</head><body>'
+                        f'<p>Redirecting to <a href="http://{ip}/">Pi-Decoder</a>...</p>'
+                        f'</body></html>'
                     )
+                    return Response(content=html, media_type="text/html", status_code=200)
             except Exception:
                 pass
         return await call_next(request)
@@ -887,7 +892,11 @@ def create_app(
             return JSONResponse({"ok": False, "error": f"Resolution out of range: {_w}x{_h}"}, 400)
         if _rate not in _valid_rates:
             return JSONResponse({"ok": False, "error": f"Unsupported refresh rate: {_rate}Hz"}, 400)
-        from pi_decoder.display import set_display_resolution
+        from pi_decoder.display import set_display_resolution, get_refresh_rates_for_resolution, get_pi_model
+        allowed = get_refresh_rates_for_resolution(f"{_w}x{_h}", get_pi_model())
+        if _rate not in allowed:
+            return JSONResponse({"ok": False,
+                "error": f"{_rate}Hz not supported at {_w}x{_h} on this hardware"}, 400)
         try:
             await set_display_resolution(resolution)
         except Exception as e:

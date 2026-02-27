@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import platform
 import re
 import socket
 import time
@@ -82,6 +83,19 @@ class MpvManager:
         self._using_backup: bool = False
         self._overlay_confirmed: bool = False
 
+    def _drm_mode(self) -> str | None:
+        """Parse config hdmi_resolution into mpv --drm-mode format.
+
+        Converts '1920x1080@30D' → '1920x1080@30' (strips trailing D suffix).
+        Returns None on non-Linux or invalid format.
+        """
+        if platform.system() != "Linux":
+            return None
+        m = re.match(r'^(\d+x\d+@\d+)D?$', self._config.display.hdmi_resolution)
+        if not m:
+            return None
+        return m.group(1)
+
     def _ytdl_format(self) -> str:
         """Build the ytdl-format string based on max_resolution config.
 
@@ -119,6 +133,7 @@ class MpvManager:
             pass
 
         drm_dev = _find_drm_device()
+        drm_mode = self._drm_mode()
 
         # Point mpv's ytdl_hook at the venv yt-dlp so it uses the
         # up-to-date version instead of the old apt system binary.
@@ -134,6 +149,7 @@ class MpvManager:
             "--vo=gpu",
             "--gpu-context=drm",
             *(["--drm-device=" + drm_dev] if drm_dev else []),
+            *(["--drm-mode=" + drm_mode] if drm_mode else []),
             "--no-terminal",
             f"--hwdec={self._config.stream.hwdec}",
             "--keepaspect=yes",

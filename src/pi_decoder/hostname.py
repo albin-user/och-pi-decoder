@@ -45,50 +45,53 @@ async def set_hostname(name: str) -> str:
         log.debug("Hostname sync skipped (not Linux)")
         return hostname
 
-    # Set hostname via hostnamectl
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "sudo", "hostnamectl", "set-hostname", hostname,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
-        if proc.returncode != 0:
-            err = stderr.decode(errors="replace").strip()
-            log.warning("hostnamectl failed (rc=%d): %s", proc.returncode, err)
-            return hostname
-    except asyncio.TimeoutError:
-        log.warning("hostnamectl timed out")
-        return hostname
-    except Exception:
-        log.warning("hostnamectl failed", exc_info=True)
-        return hostname
+    from pi_decoder.fsutil import writable
 
-    # Update /etc/hosts — replace or add 127.0.1.1 line (safe Python file write)
-    try:
-        hosts_path = Path("/etc/hosts")
-        lines = hosts_path.read_text().splitlines()
-        new_lines = []
-        found = False
-        for line in lines:
-            if line.strip().startswith("127.0.1.1"):
+    with writable("/"):
+        # Set hostname via hostnamectl
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "sudo", "hostnamectl", "set-hostname", hostname,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
+            if proc.returncode != 0:
+                err = stderr.decode(errors="replace").strip()
+                log.warning("hostnamectl failed (rc=%d): %s", proc.returncode, err)
+                return hostname
+        except asyncio.TimeoutError:
+            log.warning("hostnamectl timed out")
+            return hostname
+        except Exception:
+            log.warning("hostnamectl failed", exc_info=True)
+            return hostname
+
+        # Update /etc/hosts — replace or add 127.0.1.1 line (safe Python file write)
+        try:
+            hosts_path = Path("/etc/hosts")
+            lines = hosts_path.read_text().splitlines()
+            new_lines = []
+            found = False
+            for line in lines:
+                if line.strip().startswith("127.0.1.1"):
+                    new_lines.append(f"127.0.1.1\t{hostname}")
+                    found = True
+                else:
+                    new_lines.append(line)
+            if not found:
                 new_lines.append(f"127.0.1.1\t{hostname}")
-                found = True
-            else:
-                new_lines.append(line)
-        if not found:
-            new_lines.append(f"127.0.1.1\t{hostname}")
-        content = "\n".join(new_lines) + "\n"
-        # Write via sudo tee to handle permissions
-        proc = await asyncio.create_subprocess_exec(
-            "sudo", "tee", "/etc/hosts",
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        await asyncio.wait_for(proc.communicate(input=content.encode()), timeout=10)
-    except Exception:
-        log.warning("Failed to update /etc/hosts", exc_info=True)
+            content = "\n".join(new_lines) + "\n"
+            # Write via sudo tee to handle permissions
+            proc = await asyncio.create_subprocess_exec(
+                "sudo", "tee", "/etc/hosts",
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await asyncio.wait_for(proc.communicate(input=content.encode()), timeout=10)
+        except Exception:
+            log.warning("Failed to update /etc/hosts", exc_info=True)
 
     log.info("System hostname set to '%s'", hostname)
     return hostname

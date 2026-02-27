@@ -26,13 +26,13 @@ CONFIG_DIR="${CONFIG_DIR:-/etc/pi-decoder}"
 SERVICE_USER="${SERVICE_USER:-pi}"
 
 # ── 2. System packages ──────────────────────────────────────────────
-echo -e "\n${GREEN}[1/7] Installing system packages...${NC}"
+echo -e "\n${GREEN}[1/8] Installing system packages...${NC}"
 
 apt update
-apt install -y mpv python3-pip cec-utils avahi-daemon yt-dlp
+apt install -y mpv python3-pip cec-utils avahi-daemon yt-dlp dnsmasq-base
 
 # ── 3. Install Python package (venv) ─────────────────────────────────
-echo -e "\n${GREEN}[2/7] Installing Pi-Decoder Python package...${NC}"
+echo -e "\n${GREEN}[2/8] Installing Pi-Decoder Python package...${NC}"
 
 # Copy project to /opt
 if [ "$PROJECT_DIR" != "$INSTALL_DIR" ]; then
@@ -48,7 +48,7 @@ python3 -m venv "$INSTALL_DIR/venv"
 chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
 
 # ── 4. Configuration ────────────────────────────────────────────────
-echo -e "\n${GREEN}[3/7] Setting up configuration...${NC}"
+echo -e "\n${GREEN}[3/8] Setting up configuration...${NC}"
 
 mkdir -p "$CONFIG_DIR"
 
@@ -63,7 +63,7 @@ chmod 600 "$CONFIG_DIR/config.toml"
 chown -R "$SERVICE_USER:$SERVICE_USER" "$CONFIG_DIR"
 
 # ── 5. systemd service ──────────────────────────────────────────────
-echo -e "\n${GREEN}[4/7] Installing systemd service...${NC}"
+echo -e "\n${GREEN}[4/8] Installing systemd service...${NC}"
 
 cp "$SCRIPT_DIR/pi-decoder.service" /etc/systemd/system/
 cp "$SCRIPT_DIR/pi-decoder-network.service" /etc/systemd/system/
@@ -105,7 +105,7 @@ cp "$SCRIPT_DIR/journald-pi-decoder.conf" /etc/systemd/journald.conf.d/decoder.c
 systemctl restart systemd-journald 2>/dev/null || true
 
 # ── 6. Pi boot config ───────────────────────────────────────────────
-echo -e "\n${GREEN}[5/7] Configuring Pi boot settings...${NC}"
+echo -e "\n${GREEN}[5/8] Configuring Pi boot settings...${NC}"
 
 CONFIG_TXT="/boot/firmware/config.txt"
 [ -f "$CONFIG_TXT" ] || CONFIG_TXT="/boot/config.txt"
@@ -154,7 +154,7 @@ if command -v raspi-config >/dev/null 2>&1; then
 fi
 
 # ── 7. Unattended security updates (optional, conservative) ─────────
-echo -e "\n${GREEN}[6/7] Configuring automatic security updates...${NC}"
+echo -e "\n${GREEN}[6/8] Configuring automatic security updates...${NC}"
 
 apt install -y unattended-upgrades 2>/dev/null || true
 
@@ -180,11 +180,17 @@ APT::Periodic::AutocleanInterval "7";
 EOF
 
 # ── 8. mDNS / hostname ───────────────────────────────────────────────
-echo -e "\n${GREEN}[7/7] Setting hostname to 'pi-decoder' (pi-decoder.local)...${NC}"
+echo -e "\n${GREEN}[7/8] Setting hostname to 'pi-decoder' (pi-decoder.local)...${NC}"
 
 hostnamectl set-hostname pi-decoder 2>/dev/null || echo "pi-decoder" > /etc/hostname
 sed -i 's/127\.0\.1\.1.*/127.0.1.1\tpi-decoder/' /etc/hosts 2>/dev/null || true
 systemctl enable avahi-daemon 2>/dev/null || true
+
+# ── 9. Read-only root filesystem ────────────────────────────────────
+echo -e "\n${GREEN}[8/8] Enabling read-only root filesystem...${NC}"
+
+chmod +x "$SCRIPT_DIR/enable-readonly.sh"
+"$SCRIPT_DIR/enable-readonly.sh"
 
 # ── Done ─────────────────────────────────────────────────────────────
 echo -e "\nEnabling network services..."
