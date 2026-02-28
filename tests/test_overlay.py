@@ -1,15 +1,21 @@
-"""Tests for overlay formatting."""
+"""Tests for overlay formatting and OverlayUpdater."""
 
+import asyncio
+import json
 import pytest
 from datetime import datetime, timezone, timedelta
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from pi_decoder.overlay import (
     format_countdown,
     _ass_alpha,
     _format_schedule_status,
     format_overlay,
+    OverlayUpdater,
+    OVERLAY_ID,
 )
-from pi_decoder.config import OverlayConfig
+from pi_decoder.config import Config, OverlayConfig
+from pi_decoder.mpv_manager import MpvManager
 from pi_decoder.pco_client import LiveStatus
 
 try:
@@ -193,3 +199,219 @@ class TestFormatOverlay:
         result = format_overlay(status, cfg)
         assert "Sermon" in result
         assert "Pastor John" in result
+
+
+class TestOverlayUpdater:
+    """Test OverlayUpdater.run() loop behaviour."""
+
+    @pytest.fixture
+    def mock_mpv(self):
+        mpv = MagicMock()
+        mpv.set_overlay = AsyncMock()
+        mpv.remove_overlay = AsyncMock()
+        return mpv
+
+    @pytest.fixture
+    def mock_pco(self):
+        pco = MagicMock()
+        pco.credential_error = ""
+        pco.get_live_status = AsyncMock(return_value=LiveStatus(
+            is_live=False, message="Not live",
+        ))
+        return pco
+
+    @pytest.fixture
+    def config(self):
+        cfg = Config()
+        cfg.overlay.enabled = True
+        cfg.pco.poll_interval = 5
+        return cfg
+
+    @pytest.mark.asyncio
+    async def test_run_polls_pco_and_pushes_overlay(self, mock_mpv, mock_pco, config):
+        updater = OverlayUpdater(mock_mpv, mock_pco, config)
+
+        async def stop_after_tick():
+            await asyncio.sleep(0.05)
+            updater._running = False
+
+        await asyncio.gather(updater.run(), stop_after_tick())
+
+        mock_pco.get_live_status.assert_awaited()
+        mock_mpv.set_overlay.assert_awaited()
+        # Should remove overlay on stop
+        mock_mpv.remove_overlay.assert_awaited_with(OVERLAY_ID)
+
+    @pytest.mark.asyncio
+    async def test_run_handles_pco_error_without_crashing(self, mock_mpv, mock_pco, config):
+        mock_pco.get_live_status = AsyncMock(side_effect=Exception("API down"))
+        updater = OverlayUpdater(mock_mpv, mock_pco, config)
+
+        async def stop_after_tick():
+            await asyncio.sleep(0.05)
+            updater._running = False
+
+        # Should not raise
+        await asyncio.gather(updater.run(), stop_after_tick())
+        # Overlay should still have been pushed (using cached status)
+        mock_mpv.set_overlay.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_stop_removes_overlay_and_exits(self, mock_mpv, mock_pco, config):
+        updater = OverlayUpdater(mock_mpv, mock_pco, config)
+        updater.start_task()
+        await asyncio.sleep(0.05)
+
+        assert updater.running is True
+        await updater.stop()
+        assert updater.running is False
+        mock_mpv.remove_overlay.assert_awaited_with(OVERLAY_ID)
+
+    @pytest.mark.asyncio
+    async def test_skips_poll_on_credential_error(self, mock_mpv, mock_pco, config):
+        mock_pco.credential_error = "Authentication failed (401)"
+        updater = OverlayUpdater(mock_mpv, mock_pco, config)
+
+        async def stop_after_tick():
+            await asyncio.sleep(0.05)
+            updater._running = False
+
+        await asyncio.gather(updater.run(), stop_after_tick())
+        # Should NOT have called get_live_status due to credential_error
+        mock_pco.get_live_status.assert_not_awaited()
+
+
+# ── OverlayUpdater Integration (shallow-mock) ────────────────────────────
+
+
+def _attach_mock_writer(mgr: MpvManager) -> MagicMock:
+    """Attach a mock writer to the manager and return it."""
+    writer = MagicMock()
+    writer.write = MagicMock()
+    writer.drain = AsyncMock()
+    writer.close = MagicMock()
+    writer.wait_closed = AsyncMock()
+    mgr._writer = writer
+    return writer
+
+
+class TestOverlayUpdaterIntegration:
+    """End-to-end: format_overlay() → set_overlay() → _send() → JSON bytes.
+
+    Create a real MpvManager with a mock writer, call format_overlay() with
+    realistic LiveStatus data, pass the result through set_overlay() → _send(),
+    and verify the JSON payload contains the expected ASS content.
+    """
+
+    async def _resolve_after(self, mgr: MpvManager):
+        await asyncio.sleep(0.01)
+        rid = mgr._request_id
+        fut = mgr._pending.get(rid)
+        if fut and not fut.done():
+            fut.set_result(None)
+
+    async def test_format_overlay_to_ipc_payload(self):
+        cfg = Config()
+        cfg.overlay.enabled = True
+        cfg.overlay.position = "bottom-right"
+        mgr = MpvManager(cfg)
+        writer = _attach_mock_writer(mgr)
+
+        now = datetime.now(timezone.utc)
+        status = LiveStatus(
+            is_live=True,
+            plan_title="Sunday Service",
+            item_title="Worship",
+            item_end_time=now + timedelta(minutes=10),
+            remaining_items_length=1800,
+        )
+        ass = format_overlay(status, cfg.overlay)
+
+        task = asyncio.create_task(self._resolve_after(mgr))
+        await mgr.set_overlay(OVERLAY_ID, ass)
+        await task
+
+        raw = writer.write.call_args[0][0]
+        msg = json.loads(raw.decode().strip())
+        assert msg["command"] == ["osd-overlay"]
+        assert msg["format"] == "ass-events"
+        assert "Sunday Service" in msg["data"]
+        assert r"\an3" in msg["data"]  # bottom-right position tag
+
+    async def test_not_live_overlay_to_ipc_payload(self):
+        cfg = Config()
+        cfg.overlay.enabled = True
+        mgr = MpvManager(cfg)
+        writer = _attach_mock_writer(mgr)
+
+        status = LiveStatus(
+            is_live=False,
+            message="No live service",
+            plan_title="Evening Prayer",
+        )
+        ass = format_overlay(status, cfg.overlay)
+
+        task = asyncio.create_task(self._resolve_after(mgr))
+        await mgr.set_overlay(OVERLAY_ID, ass)
+        await task
+
+        raw = writer.write.call_args[0][0]
+        msg = json.loads(raw.decode().strip())
+        assert "No live service" in msg["data"]
+        assert "Evening Prayer" in msg["data"]
+
+    async def test_single_tick_poll_format_push(self):
+        """One real tick of OverlayUpdater.run() with writer-mocked MpvManager.
+
+        Verifies the PCO poll → format → IPC push chain end-to-end.
+        """
+        cfg = Config()
+        cfg.overlay.enabled = True
+        cfg.pco.poll_interval = 5
+        mgr = MpvManager(cfg)
+        writer = _attach_mock_writer(mgr)
+
+        now = datetime.now(timezone.utc)
+        live_status = LiveStatus(
+            is_live=True,
+            plan_title="Morning Worship",
+            item_title="Opening Song",
+            item_end_time=now + timedelta(minutes=5),
+            remaining_items_length=600,
+        )
+
+        mock_pco = MagicMock()
+        mock_pco.credential_error = ""
+        mock_pco.get_live_status = AsyncMock(return_value=live_status)
+
+        updater = OverlayUpdater(mgr, mock_pco, cfg)
+
+        # Auto-resolve any pending futures so _send() doesn't block
+        async def auto_resolve():
+            while True:
+                await asyncio.sleep(0.005)
+                for rid, fut in list(mgr._pending.items()):
+                    if not fut.done():
+                        fut.set_result(None)
+
+        async def stop_after_tick():
+            await asyncio.sleep(0.05)
+            updater._running = False
+
+        resolver = asyncio.create_task(auto_resolve())
+        await asyncio.gather(updater.run(), stop_after_tick())
+        resolver.cancel()
+
+        # PCO was polled
+        mock_pco.get_live_status.assert_awaited()
+        # Writer received IPC bytes — find the set_overlay call (not remove_overlay)
+        assert writer.write.called
+        overlay_msgs = []
+        for call in writer.write.call_args_list:
+            raw = call[0][0]
+            msg = json.loads(raw.decode().strip())
+            if msg.get("format") == "ass-events":
+                overlay_msgs.append(msg)
+        assert len(overlay_msgs) >= 1, "Expected at least one set_overlay IPC call"
+        assert overlay_msgs[0]["command"] == ["osd-overlay"]
+        assert "Morning Worship" in overlay_msgs[0]["data"]

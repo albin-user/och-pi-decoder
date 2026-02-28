@@ -16,6 +16,7 @@ from pi_decoder.config import (
     DisplayConfig,
     load_config,
     save_config,
+    validate_config,
     to_dict_safe,
 )
 
@@ -402,6 +403,54 @@ eth_ip_mode = "bogus"
         assert cfg.network.eth_ip_mode == "auto"
 
 
+class TestHotspotAndPresetsValidation:
+    """Test hotspot SSID/password and presets cap validation."""
+
+    def test_empty_ssid_resets_to_default(self, tmp_config: Path):
+        """Empty SSID (after stripping) should reset to 'Pi-Decoder'."""
+        tmp_config.write_text("""
+[network]
+hotspot_ssid = "   "
+""")
+        cfg = load_config(tmp_config)
+        assert cfg.network.hotspot_ssid == "Pi-Decoder"
+
+    def test_ssid_whitespace_stripped(self, tmp_config: Path):
+        """Leading/trailing whitespace should be stripped from valid SSIDs."""
+        tmp_config.write_text("""
+[network]
+hotspot_ssid = "  MyNetwork  "
+""")
+        cfg = load_config(tmp_config)
+        assert cfg.network.hotspot_ssid == "MyNetwork"
+
+    def test_short_password_resets_to_default(self, tmp_config: Path):
+        """Password shorter than 8 chars should reset to default."""
+        tmp_config.write_text("""
+[network]
+hotspot_password = "short"
+""")
+        cfg = load_config(tmp_config)
+        assert cfg.network.hotspot_password == "pidecodersetup"
+
+    def test_presets_truncated_to_10(self, tmp_config: Path):
+        """More than 10 presets should be truncated to 10."""
+        presets = "\n".join(
+            f'[[stream.presets]]\nlabel = "P{i}"\nurl = "rtmp://host/p{i}"'
+            for i in range(12)
+        )
+        tmp_config.write_text(f"""
+[stream]
+url = ""
+
+{presets}
+""")
+        cfg = load_config(tmp_config)
+        assert len(cfg.stream.presets) == 10
+        assert cfg.stream.presets[0]["label"] == "P0"
+        assert cfg.stream.presets[9]["label"] == "P9"
+
+
 class TestSaveConfig:
     """Test configuration saving."""
 
@@ -487,3 +536,81 @@ class TestToDictSafe:
         data = to_dict_safe(cfg)
         for section in ("general", "stream", "overlay", "pco", "web", "network", "display"):
             assert section in data
+
+
+class TestConfigRoundTripValidation:
+    """Set edge-case values → validate → save → load → verify.
+
+    These tests catch the class of bugs where validation strips/clamps
+    into a local variable but doesn't assign back to the config object.
+    """
+
+    def test_ssid_whitespace_stripped_on_roundtrip(self, tmp_config: Path):
+        cfg = Config()
+        cfg.network.hotspot_ssid = "  MyChurch  "
+        validate_config(cfg)
+        save_config(cfg, tmp_config)
+        loaded = load_config(tmp_config)
+        assert loaded.network.hotspot_ssid == "MyChurch"
+
+    def test_invalid_ssid_resets_on_roundtrip(self, tmp_config: Path):
+        cfg = Config()
+        cfg.network.hotspot_ssid = "   "
+        validate_config(cfg)
+        save_config(cfg, tmp_config)
+        loaded = load_config(tmp_config)
+        assert loaded.network.hotspot_ssid == "Pi-Decoder"
+
+    def test_short_password_resets_on_roundtrip(self, tmp_config: Path):
+        cfg = Config()
+        cfg.network.hotspot_password = "short"
+        validate_config(cfg)
+        save_config(cfg, tmp_config)
+        loaded = load_config(tmp_config)
+        assert loaded.network.hotspot_password == "pidecodersetup"
+
+    def test_oversized_ssid_resets_on_roundtrip(self, tmp_config: Path):
+        cfg = Config()
+        cfg.network.hotspot_ssid = "A" * 40  # >32 bytes
+        validate_config(cfg)
+        save_config(cfg, tmp_config)
+        loaded = load_config(tmp_config)
+        assert loaded.network.hotspot_ssid == "Pi-Decoder"
+
+    def test_clamped_values_persist_on_roundtrip(self, tmp_config: Path):
+        cfg = Config()
+        cfg.stream.network_caching = 1  # below min 200
+        cfg.overlay.font_size = 999  # above max 200
+        cfg.overlay.transparency = 5.0  # above max 1.0
+        cfg.pco.poll_interval = 0  # below min 2
+        cfg.web.port = 99999  # above max 65535
+        cfg.network.ethernet_timeout = 0  # below min 1
+        cfg.network.wifi_timeout = 999  # above max 120
+        cfg.overlay.position = "middle"  # invalid
+        cfg.overlay.timer_mode = "bogus"  # invalid
+
+        validate_config(cfg)
+        save_config(cfg, tmp_config)
+        loaded = load_config(tmp_config)
+
+        assert loaded.stream.network_caching == 200
+        assert loaded.overlay.font_size == 200
+        assert loaded.overlay.transparency == 1.0
+        assert loaded.pco.poll_interval == 2
+        assert loaded.web.port == 65535
+        assert loaded.network.ethernet_timeout == 1
+        assert loaded.network.wifi_timeout == 120
+        assert loaded.overlay.position == "bottom-right"
+        assert loaded.overlay.timer_mode == "service"
+
+    def test_presets_truncation_persists_on_roundtrip(self, tmp_config: Path):
+        cfg = Config()
+        cfg.stream.presets = [
+            {"label": f"P{i}", "url": f"rtmp://host/p{i}"} for i in range(15)
+        ]
+        validate_config(cfg)
+        save_config(cfg, tmp_config)
+        loaded = load_config(tmp_config)
+        assert len(loaded.stream.presets) == 10
+        assert loaded.stream.presets[0]["label"] == "P0"
+        assert loaded.stream.presets[9]["label"] == "P9"

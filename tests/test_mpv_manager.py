@@ -552,6 +552,28 @@ class TestBuildIdleOverlay:
         assert "Stream: No URL configured" in result
 
     @patch("pi_decoder.mpv_manager._get_version", return_value="1.0.0")
+    def test_port_suffix_when_non_default(self, _mock_ver):
+        """Port suffix should appear in URLs when port != 80."""
+        cfg = _make_config(**{"web.port": 8080})
+        mgr = MpvManager(cfg)
+        net = self._make_net(connection_type="ethernet", ip="192.168.1.100")
+        result = mgr._build_idle_overlay(net)
+
+        assert "http://192.168.1.100:8080" in result
+        assert f"http://{__import__('socket').gethostname()}.local:8080" in result
+
+    @patch("pi_decoder.mpv_manager._get_version", return_value="1.0.0")
+    def test_port_suffix_omitted_when_default(self, _mock_ver):
+        """Port suffix should be omitted when port == 80."""
+        cfg = _make_config(**{"web.port": 80})
+        mgr = MpvManager(cfg)
+        net = self._make_net(connection_type="ethernet", ip="192.168.1.100")
+        result = mgr._build_idle_overlay(net)
+
+        assert "http://192.168.1.100" in result
+        assert ":80" not in result
+
+    @patch("pi_decoder.mpv_manager._get_version", return_value="1.0.0")
     def test_hotspot_not_active_no_credentials(self, _mock_ver):
         """When hotspot_active=False, credentials should not appear."""
         mgr = _make_manager()
@@ -1653,6 +1675,226 @@ class TestPerformanceFlags:
 
         call_args = mock_exec.call_args[0]
         assert "--force-window=yes" in call_args
+
+# ── IPC Payload Verification (shallow-mock) ──────────────────────────────
+
+
+class TestSetOverlayIpcPayload:
+    """Verify the exact JSON bytes that set_overlay/remove_overlay write to IPC.
+
+    These tests mock only the writer (one step above the Unix socket),
+    letting set_overlay() → _send() → JSON serialization execute real code.
+    """
+
+    async def _resolve_after(self, mgr: MpvManager):
+        """Resolve the pending future after a tiny delay."""
+        await asyncio.sleep(0.01)
+        rid = mgr._request_id
+        fut = mgr._pending.get(rid)
+        if fut and not fut.done():
+            fut.set_result(None)
+
+    async def test_set_overlay_writes_correct_json_payload(self):
+        mgr = _make_manager()
+        writer = _attach_mock_writer(mgr)
+        ass_text = r"{\an7\fs22\b1}Hello World"
+
+        task = asyncio.create_task(self._resolve_after(mgr))
+        await mgr.set_overlay(42, ass_text)
+        await task
+
+        raw = writer.write.call_args[0][0]
+        msg = json.loads(raw.decode().strip())
+        assert msg["command"] == ["osd-overlay"]
+        assert msg["data"] == ass_text
+        assert msg["format"] == "ass-events"
+        assert msg["id"] == 42
+        assert msg["res_x"] == 1920
+        assert msg["res_y"] == 1080
+        assert "request_id" in msg
+
+    async def test_set_overlay_4k_resolution(self):
+        cfg = _make_config(**{"display.hdmi_resolution": "3840x2160@30D"})
+        mgr = _make_manager(cfg)
+        writer = _attach_mock_writer(mgr)
+
+        task = asyncio.create_task(self._resolve_after(mgr))
+        await mgr.set_overlay(42, "test")
+        await task
+
+        raw = writer.write.call_args[0][0]
+        msg = json.loads(raw.decode().strip())
+        assert msg["res_x"] == 3840
+        assert msg["res_y"] == 2160
+
+    async def test_set_overlay_invalid_resolution_falls_back(self):
+        cfg = _make_config(**{"display.hdmi_resolution": "garbage"})
+        mgr = _make_manager(cfg)
+        writer = _attach_mock_writer(mgr)
+
+        task = asyncio.create_task(self._resolve_after(mgr))
+        await mgr.set_overlay(42, "test")
+        await task
+
+        raw = writer.write.call_args[0][0]
+        msg = json.loads(raw.decode().strip())
+        assert msg["res_x"] == 1920
+        assert msg["res_y"] == 1080
+
+    async def test_remove_overlay_writes_correct_json(self):
+        mgr = _make_manager()
+        writer = _attach_mock_writer(mgr)
+
+        task = asyncio.create_task(self._resolve_after(mgr))
+        await mgr.remove_overlay(63)
+        await task
+
+        raw = writer.write.call_args[0][0]
+        msg = json.loads(raw.decode().strip())
+        assert msg["command"] == ["osd-overlay"]
+        assert msg["format"] == "none"
+        assert msg["data"] == ""
+        assert msg["id"] == 63
+
+
+# ── Idle Overlay Integration (shallow-mock) ──────────────────────────────
+
+
+class TestIdleOverlayIntegration:
+    """Execute the real _build_idle_overlay() → set_overlay() → _send() chain.
+
+    Mock only the writer and _get_version(). Verify the ASS text from
+    _build_idle_overlay appears intact as the 'data' field in the IPC JSON.
+    """
+
+    async def _resolve_after(self, mgr: MpvManager):
+        await asyncio.sleep(0.01)
+        rid = mgr._request_id
+        fut = mgr._pending.get(rid)
+        if fut and not fut.done():
+            fut.set_result(None)
+
+    @patch("pi_decoder.mpv_manager._get_version", return_value="2.0.0")
+    async def test_build_and_push_idle_overlay_produces_valid_ipc(self, _mock_ver):
+        cfg = _make_config(**{"web.port": 8080, "general.name": "TestDec"})
+        mgr = _make_manager(cfg)
+        writer = _attach_mock_writer(mgr)
+
+        net = {
+            "connection_type": "ethernet",
+            "ip": "192.168.1.50",
+            "ssid": "",
+            "hotspot_active": False,
+            "signal": 0,
+        }
+        ass = mgr._build_idle_overlay(net)
+
+        task = asyncio.create_task(self._resolve_after(mgr))
+        await mgr.set_overlay(63, ass)
+        await task
+
+        raw = writer.write.call_args[0][0]
+        msg = json.loads(raw.decode().strip())
+        assert msg["command"] == ["osd-overlay"]
+        assert msg["format"] == "ass-events"
+        # Verify ASS content survived JSON serialization intact
+        assert msg["data"] == ass
+        assert "TestDec v2.0.0" in msg["data"]
+        assert "Network: Ethernet" in msg["data"]
+        assert "192.168.1.50:8080" in msg["data"]
+
+    @patch("pi_decoder.mpv_manager._get_version", return_value="2.0.0")
+    async def test_hotspot_overlay_includes_credentials_in_ipc(self, _mock_ver):
+        cfg = _make_config(**{
+            "network.hotspot_ssid": "ChurchWiFi",
+            "network.hotspot_password": "welcome123",
+        })
+        mgr = _make_manager(cfg)
+        writer = _attach_mock_writer(mgr)
+
+        net = {
+            "connection_type": "hotspot",
+            "ip": "10.42.0.1",
+            "ssid": "",
+            "hotspot_active": True,
+            "signal": 0,
+        }
+        ass = mgr._build_idle_overlay(net)
+
+        task = asyncio.create_task(self._resolve_after(mgr))
+        await mgr.set_overlay(63, ass)
+        await task
+
+        raw = writer.write.call_args[0][0]
+        msg = json.loads(raw.decode().strip())
+        assert "Network: ChurchWiFi" in msg["data"]
+        assert "Password: welcome123" in msg["data"]
+        assert "Network: Hotspot" in msg["data"]
+
+
+# ── _get_network_info() direct tests ─────────────────────────────────────
+
+
+class TestGetNetworkInfo:
+    """Direct tests for the module-level _get_network_info() function.
+
+    This function has zero direct tests — every health loop test mocks it away.
+    It has a lazy import + socket fallback chain with two nested try/except blocks.
+    """
+
+    def test_delegates_to_network_module(self):
+        from pi_decoder.mpv_manager import _get_network_info
+        expected = {
+            "connection_type": "wifi",
+            "ip": "10.0.0.5",
+            "ssid": "MyNet",
+            "hotspot_active": False,
+            "signal": 75,
+        }
+        with patch("pi_decoder.network.get_network_info_sync", return_value=expected):
+            result = _get_network_info()
+        assert result == expected
+
+    def test_falls_back_on_import_error(self):
+        from pi_decoder.mpv_manager import _get_network_info
+        mock_sock = MagicMock()
+        mock_sock.getsockname.return_value = ("192.168.1.99", 0)
+        mock_sock.__enter__ = MagicMock(return_value=mock_sock)
+        mock_sock.__exit__ = MagicMock(return_value=False)
+
+        with patch("pi_decoder.network.get_network_info_sync", side_effect=ImportError), \
+             patch("pi_decoder.mpv_manager.socket.socket", return_value=mock_sock):
+            result = _get_network_info()
+
+        assert result["ip"] == "192.168.1.99"
+        assert result["connection_type"] == "unknown"
+
+    def test_falls_back_on_runtime_error(self):
+        from pi_decoder.mpv_manager import _get_network_info
+        mock_sock = MagicMock()
+        mock_sock.getsockname.return_value = ("10.0.0.1", 0)
+        mock_sock.__enter__ = MagicMock(return_value=mock_sock)
+        mock_sock.__exit__ = MagicMock(return_value=False)
+
+        with patch("pi_decoder.network.get_network_info_sync", side_effect=RuntimeError("nmcli failed")), \
+             patch("pi_decoder.mpv_manager.socket.socket", return_value=mock_sock):
+            result = _get_network_info()
+
+        assert result["ip"] == "10.0.0.1"
+        assert result["connection_type"] == "unknown"
+
+    def test_returns_empty_when_all_fallbacks_fail(self):
+        from pi_decoder.mpv_manager import _get_network_info
+        with patch("pi_decoder.network.get_network_info_sync", side_effect=ImportError), \
+             patch("pi_decoder.mpv_manager.socket.socket", side_effect=OSError("no network")):
+            result = _get_network_info()
+
+        assert result["ip"] == ""
+        assert result["connection_type"] == "unknown"
+        assert result["hotspot_active"] is False
+
+
+# ── Performance flags ─────────────────────────────────────────────────────
 
     @patch("pi_decoder.mpv_manager.Path")
     @patch("asyncio.create_subprocess_exec", new_callable=AsyncMock)
