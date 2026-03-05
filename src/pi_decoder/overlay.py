@@ -93,11 +93,12 @@ def format_overlay(status: LiveStatus, cfg: OverlayConfig) -> str:
         # Not live — show message
         msg = status.message or "Waiting..."
         parts = [
-            f"{{{pos_tag}\\fs{fs_title}\\1c&HFFFFFF&\\3c&H000000&\\bord2}}{msg}"
+            f"{{{pos_tag}\\fs{fs_title}\\1c&HFFFFFF&\\3c&H000000&\\3a{bg_alpha}"
+            f"\\bord4\\shad0}}{msg}"
         ]
         if status.plan_title:
             parts.append(
-                f"\\N{{\\fs{fs_info}}}{status.plan_title}"
+                f"\\N{{\\fs{fs_info}\\bord3}}{status.plan_title}"
             )
         return "".join(parts)
 
@@ -112,10 +113,10 @@ def format_overlay(status: LiveStatus, cfg: OverlayConfig) -> str:
 
         return (
             f"{{{pos_tag}\\fs{fs}\\b1"
-            f"\\1c&H0000FF&\\3c&H000000&\\4c&H000000&\\4a{bg_alpha}"
-            f"\\bord3\\shad0}}{overtime_text}"
-            f"\\N{{\\fs{fs_title}\\b0}}{status.plan_title}"
-            f"\\N{{\\fs{fs_info}}}OVERTIME"
+            f"\\1c&H0000FF&\\3c&H000000&\\3a{bg_alpha}"
+            f"\\bord8\\shad0}}{overtime_text}"
+            f"\\N{{\\fs{fs_title}\\b0\\bord4}}{status.plan_title}"
+            f"\\N{{\\fs{fs_info}\\bord3}}OVERTIME"
         )
 
     # ── Live, not finished ───────────────────────────────────────────
@@ -153,17 +154,17 @@ def format_overlay(status: LiveStatus, cfg: OverlayConfig) -> str:
 
     parts = [
         f"{{{pos_tag}\\fs{fs}\\b1"
-        f"{color}\\3c&H000000&\\4c&H000000&\\4a{bg_alpha}"
-        f"\\bord3\\shad0}}{countdown}",
+        f"{color}\\3c&H000000&\\3a{bg_alpha}"
+        f"\\bord8\\shad0}}{countdown}",
     ]
 
     # title line
-    parts.append(f"\\N{{\\fs{fs_title}\\b0}}{label}")
+    parts.append(f"\\N{{\\fs{fs_title}\\b0\\bord4}}{label}")
 
     # description (item mode only)
     if cfg.show_description and cfg.timer_mode == "item" and status.item_description:
         desc = status.item_description[:50]
-        parts.append(f"\\N{{\\fs{fs_info}}}{desc}")
+        parts.append(f"\\N{{\\fs{fs_info}\\bord3}}{desc}")
 
     # schedule status — shows "Ends Xm ahead/behind at HH:MM"
     if cfg.show_service_end and status.item_end_time is not None:
@@ -178,7 +179,7 @@ def format_overlay(status: LiveStatus, cfg: OverlayConfig) -> str:
             end_label = _format_schedule_status(
                 svc_remaining, status.planned_service_end, now, local_tz
             )
-            parts.append(f"\\N{{\\fs{fs_info}}}{end_label}")
+            parts.append(f"\\N{{\\fs{fs_info}\\bord3}}{end_label}")
         except Exception:
             pass
 

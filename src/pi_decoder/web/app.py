@@ -358,7 +358,7 @@ def create_app(
                 if mode in ("service_type", "folder"):
                     config.pco.search_mode = mode
             if "poll_interval" in data:
-                config.pco.poll_interval = max(2, min(60, int(data["poll_interval"])))
+                config.pco.poll_interval = max(1, min(60, int(data["poll_interval"])))
             validate_config(config)
             save_config(config, config_path)
         # Lazily create PCO client + overlay if conditions met

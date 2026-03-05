@@ -226,7 +226,7 @@ def validate_config(cfg: Config) -> None:
         except (KeyError, Exception):
             log.warning("Invalid timezone '%s', falling back to UTC", _tz)
             cfg.overlay.timezone = "UTC"
-    cfg.pco.poll_interval = max(2, min(cfg.pco.poll_interval, 60))
+    cfg.pco.poll_interval = max(1, min(cfg.pco.poll_interval, 60))
     if cfg.pco.search_mode not in ("service_type", "folder"):
         cfg.pco.search_mode = "service_type"
     cfg.web.port = max(1, min(cfg.web.port, 65535))

@@ -661,8 +661,8 @@
   window.saveOverlayConfig = function (btn) {
     // Client-side validation
     var pollVal = parseInt(document.getElementById("pcoPollInterval").value, 10);
-    if (!isNaN(pollVal) && (pollVal < 5 || pollVal > 300)) {
-      toast("Poll interval must be between 5 and 300 seconds", "error");
+    if (!isNaN(pollVal) && (pollVal < 1 || pollVal > 60)) {
+      toast("Poll interval must be between 1 and 60 seconds", "error");
       return;
     }
     var fontSize = parseInt(document.getElementById("overlayFontSize").value, 10);
