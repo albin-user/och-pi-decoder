@@ -85,12 +85,26 @@ def _format_schedule_status(
         return f"Ends {slip_minutes}m ahead at {end_time_str}"
 
 
+BOX_MAX_CHARS = 25  # fixed box width in characters at font_size_title
+
+
+def _truncate(text: str, max_chars: int) -> str:
+    """Truncate *text* to *max_chars*, adding ellipsis if needed."""
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 1] + "…"
+
+
 def _overlay_layout(
     res_x: int, res_y: int,
-    fs: int, fs_title: int, fs_info: int,
-    num_info_lines: int,
+    fs_title: int,
+    num_lines: int,
+    line_sizes: list[int],
 ) -> dict:
     """Calculate box size, edge gap, and text padding.
+
+    Width is fixed at BOX_MAX_CHARS characters at *fs_title*.
+    Height is dynamic based on the font sizes of lines actually present.
 
     Returns dict with: xbord, ybord, edge_x, edge_y, text_margin_x, text_margin_y
     """
@@ -102,18 +116,14 @@ def _overlay_layout(
     pad_x = int(res_x * 0.008)
     pad_y = int(res_y * 0.008)
 
-    # Box size (xbord/ybord)
+    # Fixed box width based on title font size
     char_w = 0.55
-    max_text_w = max(
-        fs * 3.5 * char_w,           # countdown "HH:MM:SS" (~8 chars)
-        fs_title * 20 * char_w,       # plan/item title (~20 chars)
-        fs_info * 28 * char_w,        # schedule info (~28 chars)
-    )
-    xbord = int(max_text_w + pad_x * 2)
+    text_w = BOX_MAX_CHARS * fs_title * char_w
+    xbord = int(text_w + pad_x * 2)
 
-    # Height: sum of line heights + inner padding top & bottom
+    # Height: sum of actual line heights + inner padding top & bottom
     line_h = 1.3
-    text_h = fs * line_h + fs_title * line_h + fs_info * line_h * num_info_lines
+    text_h = sum(fs * line_h for fs in line_sizes)
     ybord = int(text_h + pad_y * 2)
 
     # Text margins: edge_gap + inner padding
@@ -199,21 +209,25 @@ def format_overlay(
 
     # ── Build foreground event text (same logic as before, without bg) ──
 
+    # max displayable chars at each font size, scaled relative to title
+    max_title = BOX_MAX_CHARS
+    max_info = int(BOX_MAX_CHARS * fs_title / fs_info) if fs_info else max_title
+
     if not status.is_live:
-        msg = status.message or "Waiting..."
+        msg = _truncate(status.message or "Waiting...", max_title)
         fg_parts = [
             f"{{{pos_tag}\\fs{fs_title}"
             f"\\1c&HFFFFFF&\\3c&H000000&"
             f"\\bord{_text_bord(fs_title)}\\shad0}}{msg}"
         ]
+        line_sizes = [fs_title]
         if status.plan_title:
+            pt = _truncate(status.plan_title, max_info)
             fg_parts.append(
-                f"\\N{{\\fs{fs_info}\\bord{_text_bord(fs_info)}}}{status.plan_title}"
+                f"\\N{{\\fs{fs_info}\\bord{_text_bord(fs_info)}}}{pt}"
             )
-        num_info = 1 if status.plan_title else 0
-        layout = _overlay_layout(res_x, res_y, fs_title, fs_title, fs_info, num_info)
-        # For not-live, the "countdown" line uses fs_title, so override
-        layout = _overlay_layout(res_x, res_y, fs_title, fs_info, fs_info, num_info)
+            line_sizes.append(fs_info)
+        layout = _overlay_layout(res_x, res_y, fs_title, len(line_sizes), line_sizes)
 
         bg = _build_bg_events(cfg.position, bg_alpha, layout, res_x, res_y)
         fg = _build_fg_events("".join(fg_parts), cfg.position, layout, res_x, res_y)
@@ -227,14 +241,15 @@ def format_overlay(
             if delta > 0:
                 overtime_text = f"-{format_countdown(delta)}"
 
+        plan_label = _truncate(status.plan_title or "Service", max_title)
         fg_parts = [
             f"{{{pos_tag}\\fs{fs}\\b1"
             f"\\1c&H0000FF&\\3c&H000000&"
             f"\\bord{_text_bord(fs)}\\shad0}}{overtime_text}"
-            f"\\N{{\\fs{fs_title}\\b0\\bord{_text_bord(fs_title)}}}{status.plan_title}"
+            f"\\N{{\\fs{fs_title}\\b0\\bord{_text_bord(fs_title)}}}{plan_label}"
             f"\\N{{\\fs{fs_info}\\bord{_text_bord(fs_info)}}}OVERTIME"
         ]
-        layout = _overlay_layout(res_x, res_y, fs, fs_title, fs_info, 1)
+        layout = _overlay_layout(res_x, res_y, fs_title, 3, [fs, fs_title, fs_info])
 
         bg = _build_bg_events(cfg.position, bg_alpha, layout, res_x, res_y)
         fg = _build_fg_events("".join(fg_parts), cfg.position, layout, res_x, res_y)
@@ -245,7 +260,7 @@ def format_overlay(
     if cfg.timer_mode == "item" and status.item_end_time:
         remaining = (status.item_end_time - now).total_seconds()
         countdown = format_countdown(remaining)
-        label = status.item_title or "Current Item"
+        label = _truncate(status.item_title or "Current Item", max_title)
     elif status.item_end_time is not None:
         item_remaining = (status.item_end_time - now).total_seconds()
         if item_remaining >= 0:
@@ -255,11 +270,11 @@ def format_overlay(
         else:
             remaining = item_remaining
         countdown = format_countdown(remaining)
-        label = status.plan_title or "Service"
+        label = _truncate(status.plan_title or "Service", max_title)
     else:
         remaining = 0
         countdown = "--:--"
-        label = status.plan_title or "Service"
+        label = _truncate(status.plan_title or "Service", max_title)
 
     # color: white normally, red if overtime
     if remaining < 0:
@@ -272,18 +287,16 @@ def format_overlay(
         f"{color}\\3c&H000000&"
         f"\\bord{_text_bord(fs)}\\shad0}}{countdown}",
     ]
+    line_sizes = [fs, fs_title]
 
     # title line (reset to white in case countdown was red)
     fg_parts.append(f"\\N{{\\fs{fs_title}\\b0\\1c&HFFFFFF&\\bord{_text_bord(fs_title)}}}{label}")
 
-    # count info lines for layout
-    num_info = 0
-
     # description (item mode only)
     if cfg.show_description and cfg.timer_mode == "item" and status.item_description:
-        desc = status.item_description[:50]
+        desc = _truncate(status.item_description, max_info)
         fg_parts.append(f"\\N{{\\fs{fs_info}\\1c&HFFFFFF&\\bord{_text_bord(fs_info)}}}{desc}")
-        num_info += 1
+        line_sizes.append(fs_info)
 
     # schedule status
     if cfg.show_service_end and status.item_end_time is not None:
@@ -298,11 +311,11 @@ def format_overlay(
                 svc_remaining, status.planned_service_end, now, local_tz
             )
             fg_parts.append(f"\\N{{\\fs{fs_info}\\1c&HFFFFFF&\\bord{_text_bord(fs_info)}}}{end_label}")
-            num_info += 1
+            line_sizes.append(fs_info)
         except Exception:
             pass
 
-    layout = _overlay_layout(res_x, res_y, fs, fs_title, fs_info, max(1, num_info))
+    layout = _overlay_layout(res_x, res_y, fs_title, len(line_sizes), line_sizes)
 
     bg = _build_bg_events(cfg.position, bg_alpha, layout, res_x, res_y)
     fg = _build_fg_events("".join(fg_parts), cfg.position, layout, res_x, res_y)
@@ -323,6 +336,7 @@ class OverlayUpdater:
         self._config = config
         self._running = False
         self._task: asyncio.Task | None = None
+        self._poll_task: asyncio.Task | None = None
         self._last_status: LiveStatus = LiveStatus(message="Initializing...")
         self._last_overlay_warn: float = 0.0
 
@@ -346,17 +360,12 @@ class OverlayUpdater:
             while self._running:
                 now_mono = _time.monotonic()
 
-                # Poll PCO API periodically
+                # Fire PCO poll as background task so it doesn't block ticks
                 if now_mono - last_poll >= poll_interval:
-                    if self._pco.credential_error:
-                        # Don't hammer API with bad credentials
-                        last_poll = now_mono
-                    else:
-                        try:
-                            self._last_status = await self._pco.get_live_status()
-                        except Exception:
-                            log.exception("PCO poll failed")
-                        last_poll = now_mono
+                    last_poll = now_mono
+                    if not self._pco.credential_error:
+                        if self._poll_task is None or self._poll_task.done():
+                            self._poll_task = asyncio.create_task(self._do_poll())
 
                 # Format and push overlay every second
                 if self._config.overlay.enabled:
@@ -392,8 +401,21 @@ class OverlayUpdater:
                 except Exception:
                     pass
 
+    async def _do_poll(self) -> None:
+        """Run a single PCO poll in the background."""
+        try:
+            self._last_status = await self._pco.get_live_status()
+        except Exception:
+            log.exception("PCO poll failed")
+
     async def stop(self) -> None:
         self._running = False
+        if self._poll_task and not self._poll_task.done():
+            self._poll_task.cancel()
+            try:
+                await self._poll_task
+            except asyncio.CancelledError:
+                pass
         if self._task and not self._task.done():
             self._task.cancel()
             try:

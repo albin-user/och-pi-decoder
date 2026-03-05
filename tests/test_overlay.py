@@ -11,6 +11,8 @@ from pi_decoder.overlay import (
     _ass_alpha,
     _format_schedule_status,
     _overlay_layout,
+    _truncate,
+    BOX_MAX_CHARS,
     format_overlay,
     OverlayUpdater,
     OVERLAY_ID,
@@ -128,11 +130,32 @@ class TestFormatScheduleStatus:
         assert "behind" in result
 
 
+class TestTruncate:
+    """Test _truncate() text truncation."""
+
+    def test_short_text_unchanged(self):
+        assert _truncate("Hello", 25) == "Hello"
+
+    def test_exact_length_unchanged(self):
+        text = "A" * 25
+        assert _truncate(text, 25) == text
+
+    def test_long_text_truncated_with_ellipsis(self):
+        text = "A Very Long Service Title That Exceeds Limit"
+        result = _truncate(text, 25)
+        assert len(result) == 25
+        assert result.endswith("…")
+
+    def test_truncate_preserves_prefix(self):
+        result = _truncate("Sunday Morning Contemporary Service", 25)
+        assert result == "Sunday Morning Contempor…"
+
+
 class TestOverlayLayout:
     """Test _overlay_layout() dimension calculations."""
 
     def test_default_1080p(self):
-        layout = _overlay_layout(1920, 1080, 96, 38, 32, 1)
+        layout = _overlay_layout(1920, 1080, 38, 2, [96, 38])
         assert layout["edge_x"] == 28  # int(1920 * 0.015)
         assert layout["edge_y"] == 16  # int(1080 * 0.015)
         assert layout["xbord"] > 0
@@ -140,10 +163,15 @@ class TestOverlayLayout:
         assert layout["text_margin_x"] == layout["edge_x"] + int(1920 * 0.008)
         assert layout["text_margin_y"] == layout["edge_y"] + int(1080 * 0.008)
 
-    def test_more_info_lines_increases_height(self):
-        layout_1 = _overlay_layout(1920, 1080, 96, 38, 32, 1)
-        layout_2 = _overlay_layout(1920, 1080, 96, 38, 32, 2)
-        assert layout_2["ybord"] > layout_1["ybord"]
+    def test_more_lines_increases_height(self):
+        layout_2 = _overlay_layout(1920, 1080, 38, 2, [96, 38])
+        layout_3 = _overlay_layout(1920, 1080, 38, 3, [96, 38, 32])
+        assert layout_3["ybord"] > layout_2["ybord"]
+
+    def test_fixed_width_regardless_of_text(self):
+        layout_a = _overlay_layout(1920, 1080, 38, 2, [96, 38])
+        layout_b = _overlay_layout(1920, 1080, 38, 3, [96, 38, 32])
+        assert layout_a["xbord"] == layout_b["xbord"]
 
 
 class TestFormatOverlay:
@@ -342,6 +370,33 @@ class TestOverlayUpdater:
         # Should NOT have called get_live_status due to credential_error
         mock_pco.get_live_status.assert_not_awaited()
 
+    @pytest.mark.asyncio
+    async def test_slow_poll_does_not_block_overlay_tick(self, mock_mpv, mock_pco, config):
+        """Overlay pushes continue even when the PCO poll is slow."""
+        config.pco.poll_interval = 1  # poll on first tick
+
+        async def slow_poll():
+            await asyncio.sleep(10)  # never finishes during the test
+            return LiveStatus(is_live=False, message="Done")
+
+        mock_pco.get_live_status = AsyncMock(side_effect=slow_poll)
+        updater = OverlayUpdater(mock_mpv, mock_pco, config)
+
+        async def stop_after_ticks():
+            await asyncio.sleep(0.15)
+            updater._running = False
+
+        await asyncio.gather(updater.run(), stop_after_ticks())
+        # Overlay should still have been pushed despite slow poll
+        assert mock_mpv.set_overlay.await_count >= 2
+        # Clean up the dangling poll task
+        if updater._poll_task and not updater._poll_task.done():
+            updater._poll_task.cancel()
+            try:
+                await updater._poll_task
+            except asyncio.CancelledError:
+                pass
+
 
 # ── OverlayUpdater Integration (shallow-mock) ────────────────────────────
 
@@ -459,12 +514,14 @@ class TestOverlayUpdaterIntegration:
                     if not fut.done():
                         fut.set_result(None)
 
-        async def stop_after_tick():
-            await asyncio.sleep(0.05)
+        resolver = asyncio.create_task(auto_resolve())
+        # Run for >1s to get a second tick (poll completes in background
+        # before the next overlay push)
+        async def stop_after_two_ticks():
+            await asyncio.sleep(1.1)
             updater._running = False
 
-        resolver = asyncio.create_task(auto_resolve())
-        await asyncio.gather(updater.run(), stop_after_tick())
+        await asyncio.gather(updater.run(), stop_after_two_ticks())
         resolver.cancel()
 
         # PCO was polled
@@ -481,6 +538,6 @@ class TestOverlayUpdaterIntegration:
         assert len(overlay_msgs) >= 2, "Expected bg + fg set_overlay IPC calls"
         assert overlay_msgs[0]["command"]["name"] == "osd-overlay"
         # bg layer uses \p1 drawing mode
-        assert "\\p1" in overlay_msgs[0]["command"]["data"]
-        # fg layer has the service title
-        assert "Morning Worship" in overlay_msgs[1]["command"]["data"]
+        assert any("\\p1" in m["command"]["data"] for m in overlay_msgs)
+        # fg layer has the service title (after background poll completes)
+        assert any("Morning Worship" in m["command"]["data"] for m in overlay_msgs)
