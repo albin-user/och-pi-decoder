@@ -102,11 +102,13 @@ def _system_info() -> dict:
 # Known captive portal check domains
 _CAPTIVE_DOMAINS = {
     "connectivitycheck.gstatic.com",
+    "connectivitycheck.android.com",
     "clients3.google.com",
     "captive.apple.com",
     "www.apple.com",
     "msftconnecttest.com",
     "www.msftconnecttest.com",
+    "www.msftncsi.com",
     "detectportal.firefox.com",
     "nmcheck.gnome.org",
 }
@@ -682,7 +684,7 @@ def create_app(
                     "error": "Cannot start hotspot while connected via "
                              + net["connection_type"] + ". Disconnect first."}, 400)
         except Exception:
-            pass
+            log.warning("Hotspot guard check failed", exc_info=True)
         try:
             await start_hotspot(config.network.hotspot_ssid, config.network.hotspot_password)
         except Exception as e:

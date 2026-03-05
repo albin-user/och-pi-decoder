@@ -231,6 +231,25 @@ def validate_config(cfg: Config) -> None:
         cfg.pco.search_mode = "service_type"
     cfg.web.port = max(1, min(cfg.web.port, 65535))
 
+    # Hotspot SSID validation (WiFi spec: non-empty, max 32 bytes)
+    _ssid = cfg.network.hotspot_ssid.strip()
+    if not _ssid or len(_ssid.encode()) > 32:
+        log.warning("Invalid hotspot SSID '%s', resetting to 'Pi-Decoder'", cfg.network.hotspot_ssid)
+        cfg.network.hotspot_ssid = "Pi-Decoder"
+    else:
+        cfg.network.hotspot_ssid = _ssid
+
+    # Hotspot password validation (WPA2 requires min 8 chars)
+    if len(cfg.network.hotspot_password) < 8:
+        log.warning("Hotspot password too short (%d chars), resetting to default",
+                     len(cfg.network.hotspot_password))
+        cfg.network.hotspot_password = "pidecodersetup"
+
+    # Presets list cap (matches web API limit)
+    if len(cfg.stream.presets) > 10:
+        log.warning("Too many presets (%d), truncating to 10", len(cfg.stream.presets))
+        cfg.stream.presets = cfg.stream.presets[:10]
+
     # Stream max resolution validation
     _allowed_max_res = {"best", "2160", "1440", "1080", "720", "480"}
     if cfg.stream.max_resolution not in _allowed_max_res:

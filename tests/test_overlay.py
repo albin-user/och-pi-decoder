@@ -333,10 +333,12 @@ class TestOverlayUpdaterIntegration:
 
         raw = writer.write.call_args[0][0]
         msg = json.loads(raw.decode().strip())
-        assert msg["command"] == ["osd-overlay"]
-        assert msg["format"] == "ass-events"
-        assert "Sunday Service" in msg["data"]
-        assert r"\an3" in msg["data"]  # bottom-right position tag
+        cmd = msg["command"]
+        assert isinstance(cmd, dict)
+        assert cmd["name"] == "osd-overlay"
+        assert cmd["format"] == "ass-events"
+        assert "Sunday Service" in cmd["data"]
+        assert r"\an3" in cmd["data"]  # bottom-right position tag
 
     async def test_not_live_overlay_to_ipc_payload(self):
         cfg = Config()
@@ -357,8 +359,8 @@ class TestOverlayUpdaterIntegration:
 
         raw = writer.write.call_args[0][0]
         msg = json.loads(raw.decode().strip())
-        assert "No live service" in msg["data"]
-        assert "Evening Prayer" in msg["data"]
+        assert "No live service" in msg["command"]["data"]
+        assert "Evening Prayer" in msg["command"]["data"]
 
     async def test_single_tick_poll_format_push(self):
         """One real tick of OverlayUpdater.run() with writer-mocked MpvManager.
@@ -410,8 +412,9 @@ class TestOverlayUpdaterIntegration:
         for call in writer.write.call_args_list:
             raw = call[0][0]
             msg = json.loads(raw.decode().strip())
-            if msg.get("format") == "ass-events":
+            cmd = msg.get("command", {})
+            if isinstance(cmd, dict) and cmd.get("format") == "ass-events":
                 overlay_msgs.append(msg)
         assert len(overlay_msgs) >= 1, "Expected at least one set_overlay IPC call"
-        assert overlay_msgs[0]["command"] == ["osd-overlay"]
-        assert "Morning Worship" in overlay_msgs[0]["data"]
+        assert overlay_msgs[0]["command"]["name"] == "osd-overlay"
+        assert "Morning Worship" in overlay_msgs[0]["command"]["data"]

@@ -1026,6 +1026,235 @@ class TestCircuitBreaker:
         assert client._backoff_until == 0.0
 
 
+class TestFindBestLivePlan:
+    """Test _find_best_live_plan() across multiple service types."""
+
+    @pytest.mark.asyncio
+    async def test_finds_most_recent_live_plan(self, pco_config):
+        """Should pick the plan with the most recent live_start_at."""
+        client = PCOClient(pco_config)
+        now = datetime.now(timezone.utc)
+        older_start = (now - timedelta(hours=2)).isoformat()
+        newer_start = (now - timedelta(minutes=30)).isoformat()
+
+        plans_resp = MagicMock()
+        plans_resp.status_code = 200
+        plans_resp.raise_for_status = MagicMock()
+        plans_resp.json.return_value = {
+            "data": [
+                {"id": "plan-old", "relationships": {"plan_times": {"data": []}}},
+                {"id": "plan-new", "relationships": {"plan_times": {"data": []}}},
+            ],
+            "included": [],
+        }
+
+        live_old = MagicMock()
+        live_old.status_code = 200
+        live_old.json.return_value = {
+            "data": {"relationships": {"current_item_time": {"data": {"id": "it-old"}}}},
+            "included": [
+                {"id": "it-old", "type": "ItemTime", "attributes": {"live_start_at": older_start}},
+            ],
+        }
+
+        live_new = MagicMock()
+        live_new.status_code = 200
+        live_new.json.return_value = {
+            "data": {"relationships": {"current_item_time": {"data": {"id": "it-new"}}}},
+            "included": [
+                {"id": "it-new", "type": "ItemTime", "attributes": {"live_start_at": newer_start}},
+            ],
+        }
+
+        mock_http = AsyncMock()
+        mock_http.is_closed = False
+        # First call = plans, then live for plan-old, then live for plan-new
+        mock_http.get = AsyncMock(side_effect=[plans_resp, live_old, live_new])
+        client._client = mock_http
+
+        result = await client._find_best_live_plan()
+        assert result is not None
+        assert result[0] == "plan-new"
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_no_live_plans(self, pco_config):
+        client = PCOClient(pco_config)
+        plans_resp = MagicMock()
+        plans_resp.status_code = 200
+        plans_resp.raise_for_status = MagicMock()
+        plans_resp.json.return_value = {"data": [], "included": []}
+
+        mock_http = AsyncMock()
+        mock_http.is_closed = False
+        mock_http.get = AsyncMock(return_value=plans_resp)
+        client._client = mock_http
+
+        result = await client._find_best_live_plan()
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_on_auth_failure(self, pco_config):
+        client = PCOClient(pco_config)
+        plans_resp = MagicMock()
+        plans_resp.status_code = 401
+        plans_resp.json.return_value = {}
+
+        mock_http = AsyncMock()
+        mock_http.is_closed = False
+        mock_http.get = AsyncMock(return_value=plans_resp)
+        client._client = mock_http
+
+        result = await client._find_best_live_plan()
+        assert result is None
+
+
+class TestPollLive:
+    """Test _poll_live() parsing for a locked plan."""
+
+    @pytest.mark.asyncio
+    async def test_poll_live_returns_parsed_status(self, pco_config):
+        client = PCOClient(pco_config)
+        client._locked_st_id = "12345"
+        now = datetime.now(timezone.utc)
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {
+            "data": {
+                "attributes": {"title": "Sunday Service"},
+                "links": {"controller": "/users/1"},
+                "relationships": {
+                    "current_item_time": {"data": {"id": "it-1", "type": "ItemTime"}}
+                },
+            },
+            "included": [
+                {
+                    "id": "it-1", "type": "ItemTime",
+                    "attributes": {"live_start_at": (now - timedelta(minutes=5)).isoformat()},
+                    "relationships": {"item": {"data": {"id": "item-1"}}},
+                },
+                {
+                    "id": "item-1", "type": "Item",
+                    "attributes": {
+                        "title": "Worship", "length": 900,
+                        "item_type": "song", "service_position": "during",
+                    },
+                },
+            ],
+        }
+
+        mock_http = AsyncMock()
+        mock_http.is_closed = False
+        mock_http.get = AsyncMock(return_value=mock_resp)
+        client._client = mock_http
+
+        status = await client._poll_live("plan-1", "12345")
+        assert status.is_live is True
+        assert status.item_title == "Worship"
+        assert status.plan_title == "Sunday Service"
+
+    @pytest.mark.asyncio
+    async def test_poll_live_404_returns_not_found(self, pco_config):
+        client = PCOClient(pco_config)
+        mock_resp = MagicMock()
+        mock_resp.status_code = 404
+
+        mock_http = AsyncMock()
+        mock_http.is_closed = False
+        mock_http.get = AsyncMock(return_value=mock_resp)
+        client._client = mock_http
+
+        status = await client._poll_live("plan-missing", "12345")
+        assert "not found" in status.message.lower()
+
+
+class TestFetchLiveStatus:
+    """Test _fetch_live_status() plan locking flow."""
+
+    @pytest.mark.asyncio
+    async def test_locked_plan_polls_directly(self, pco_config):
+        """When locked, should poll the locked plan without re-discovering."""
+        client = PCOClient(pco_config)
+        client._locked_plan_id = "plan-1"
+        client._locked_st_id = "12345"
+        client._locked_live_start_at = datetime.now(timezone.utc)
+
+        now = datetime.now(timezone.utc)
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {
+            "data": {
+                "attributes": {"title": "Locked Service"},
+                "links": {"controller": "/users/1"},
+                "relationships": {
+                    "current_item_time": {"data": {"id": "it-1", "type": "ItemTime"}}
+                },
+            },
+            "included": [
+                {
+                    "id": "it-1", "type": "ItemTime",
+                    "attributes": {"live_start_at": now.isoformat()},
+                    "relationships": {"item": {"data": {"id": "item-1"}}},
+                },
+                {
+                    "id": "item-1", "type": "Item",
+                    "attributes": {
+                        "title": "Sermon", "length": 1800,
+                        "item_type": "item", "service_position": "during",
+                    },
+                },
+            ],
+        }
+
+        mock_http = AsyncMock()
+        mock_http.is_closed = False
+        mock_http.get = AsyncMock(return_value=mock_resp)
+        client._client = mock_http
+
+        status = await client._fetch_live_status()
+        assert status.is_live is True
+        assert status.item_title == "Sermon"
+        # Should still be locked
+        assert client._locked_plan_id == "plan-1"
+
+    @pytest.mark.asyncio
+    async def test_unlocks_when_session_ends(self, pco_config):
+        """When locked plan is no longer live, should unlock and re-discover."""
+        client = PCOClient(pco_config)
+        client._locked_plan_id = "plan-1"
+        client._locked_st_id = "12345"
+
+        # Live endpoint returns not-live status (no current_item_time)
+        live_resp = MagicMock()
+        live_resp.status_code = 200
+        live_resp.raise_for_status = MagicMock()
+        live_resp.json.return_value = {
+            "data": {
+                "attributes": {"title": "Ended Service"},
+                "links": {},
+                "relationships": {},
+            },
+            "included": [],
+        }
+
+        # Plans endpoint for re-discovery (no live plans found)
+        plans_resp = MagicMock()
+        plans_resp.status_code = 200
+        plans_resp.raise_for_status = MagicMock()
+        plans_resp.json.return_value = {"data": [], "included": []}
+
+        mock_http = AsyncMock()
+        mock_http.is_closed = False
+        mock_http.get = AsyncMock(side_effect=[live_resp, plans_resp, plans_resp, plans_resp])
+        client._client = mock_http
+
+        status = await client._fetch_live_status()
+        # Should have unlocked
+        assert client._locked_plan_id is None
+
+
 class TestUpdateCredentials:
     """Test credential update with folder/search mode."""
 

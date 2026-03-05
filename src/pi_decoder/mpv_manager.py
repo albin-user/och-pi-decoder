@@ -318,7 +318,10 @@ class MpvManager:
         )
         if not self._overlay_confirmed:
             self._overlay_confirmed = True
-            log.info("osd-overlay accepted by mpv (id=%d)", overlay_id)
+            log.info(
+                "osd-overlay accepted (id=%d, res=%dx%d, data_len=%d)",
+                overlay_id, res_x, res_y, len(ass_text),
+            )
 
     async def remove_overlay(self, overlay_id: int) -> None:
         await self._send(["osd-overlay"], id=overlay_id, format="none", data="")
@@ -396,9 +399,10 @@ class MpvManager:
 
         # IP line
         if ip:
+            port_suffix = f":{self._config.web.port}" if self._config.web.port != 80 else ""
             lines.append(f"{body}IP: {ip}")
-            lines.append(f"{body}Web UI: http://{ip}")
-            lines.append(f"{body}        http://{socket.gethostname()}.local")
+            lines.append(f"{body}Web UI: http://{ip}{port_suffix}")
+            lines.append(f"{body}        http://{socket.gethostname()}.local{port_suffix}")
         else:
             lines.append(f"{body}IP: No network")
 
@@ -505,8 +509,11 @@ class MpvManager:
     async def _send(self, command: list, timeout: float = 5.0, **named_args):
         """Send a JSON command and wait for the response.
 
-        Extra keyword arguments are merged into the top-level message as
-        named parameters (used by commands like ``osd-overlay``).
+        When *named_args* are provided the ``command`` field is sent as a
+        JSON object (``{"name": …, …}``) so mpv processes the arguments
+        via ``mpv_command_node()`` / ``MPV_FORMAT_NODE_MAP``.  Without
+        named args the ``command`` field stays as a JSON array for normal
+        positional commands.
         Uses an IPC lock to ensure atomic send/receive pairs.
         """
         async with self._ipc_lock:
@@ -514,7 +521,16 @@ class MpvManager:
                 raise RuntimeError("IPC not connected")
             self._request_id += 1
             rid = self._request_id
-            msg = {"command": command, "request_id": rid, **named_args}
+            if named_args:
+                # Named arguments: command field must be a JSON object
+                cmd_name = command[0] if isinstance(command, list) else command
+                msg = {
+                    "command": {"name": cmd_name, **named_args},
+                    "request_id": rid,
+                }
+            else:
+                # Positional arguments: command field is a JSON array
+                msg = {"command": command, "request_id": rid}
             payload = json.dumps(msg) + "\n"
             fut: asyncio.Future = asyncio.get_running_loop().create_future()
             self._pending[rid] = fut

@@ -1705,12 +1705,14 @@ class TestSetOverlayIpcPayload:
 
         raw = writer.write.call_args[0][0]
         msg = json.loads(raw.decode().strip())
-        assert msg["command"] == ["osd-overlay"]
-        assert msg["data"] == ass_text
-        assert msg["format"] == "ass-events"
-        assert msg["id"] == 42
-        assert msg["res_x"] == 1920
-        assert msg["res_y"] == 1080
+        cmd = msg["command"]
+        assert isinstance(cmd, dict)
+        assert cmd["name"] == "osd-overlay"
+        assert cmd["data"] == ass_text
+        assert cmd["format"] == "ass-events"
+        assert cmd["id"] == 42
+        assert cmd["res_x"] == 1920
+        assert cmd["res_y"] == 1080
         assert "request_id" in msg
 
     async def test_set_overlay_4k_resolution(self):
@@ -1724,8 +1726,8 @@ class TestSetOverlayIpcPayload:
 
         raw = writer.write.call_args[0][0]
         msg = json.loads(raw.decode().strip())
-        assert msg["res_x"] == 3840
-        assert msg["res_y"] == 2160
+        assert msg["command"]["res_x"] == 3840
+        assert msg["command"]["res_y"] == 2160
 
     async def test_set_overlay_invalid_resolution_falls_back(self):
         cfg = _make_config(**{"display.hdmi_resolution": "garbage"})
@@ -1738,8 +1740,8 @@ class TestSetOverlayIpcPayload:
 
         raw = writer.write.call_args[0][0]
         msg = json.loads(raw.decode().strip())
-        assert msg["res_x"] == 1920
-        assert msg["res_y"] == 1080
+        assert msg["command"]["res_x"] == 1920
+        assert msg["command"]["res_y"] == 1080
 
     async def test_remove_overlay_writes_correct_json(self):
         mgr = _make_manager()
@@ -1751,10 +1753,59 @@ class TestSetOverlayIpcPayload:
 
         raw = writer.write.call_args[0][0]
         msg = json.loads(raw.decode().strip())
-        assert msg["command"] == ["osd-overlay"]
-        assert msg["format"] == "none"
-        assert msg["data"] == ""
-        assert msg["id"] == 63
+        cmd = msg["command"]
+        assert isinstance(cmd, dict)
+        assert cmd["name"] == "osd-overlay"
+        assert cmd["format"] == "none"
+        assert cmd["data"] == ""
+        assert cmd["id"] == 63
+
+
+# ── IPC Format Regression ─────────────────────────────────────────────────
+
+
+class TestIpcCommandFormat:
+    """Verify positional-arg commands use array format and named-arg commands
+    use object format — regression test for the mpv IPC fix."""
+
+    async def _resolve_after(self, mgr: MpvManager):
+        await asyncio.sleep(0.01)
+        rid = mgr._request_id
+        fut = mgr._pending.get(rid)
+        if fut and not fut.done():
+            fut.set_result(None)
+
+    async def test_positional_command_uses_array_format(self):
+        mgr = _make_manager()
+        writer = _attach_mock_writer(mgr)
+
+        task = asyncio.create_task(self._resolve_after(mgr))
+        await mgr._send(["loadfile", "http://example.com/stream"])
+        await task
+
+        raw = writer.write.call_args[0][0]
+        msg = json.loads(raw.decode().strip())
+        assert isinstance(msg["command"], list)
+        assert msg["command"] == ["loadfile", "http://example.com/stream"]
+
+    async def test_named_arg_command_uses_object_format(self):
+        mgr = _make_manager()
+        writer = _attach_mock_writer(mgr)
+
+        task = asyncio.create_task(self._resolve_after(mgr))
+        await mgr._send(
+            ["osd-overlay"],
+            id=1, format="ass-events", data="test", res_x=1920, res_y=1080,
+        )
+        await task
+
+        raw = writer.write.call_args[0][0]
+        msg = json.loads(raw.decode().strip())
+        assert isinstance(msg["command"], dict)
+        assert msg["command"]["name"] == "osd-overlay"
+        assert msg["command"]["id"] == 1
+        assert msg["command"]["format"] == "ass-events"
+        assert msg["command"]["data"] == "test"
 
 
 # ── Idle Overlay Integration (shallow-mock) ──────────────────────────────
@@ -1795,13 +1846,15 @@ class TestIdleOverlayIntegration:
 
         raw = writer.write.call_args[0][0]
         msg = json.loads(raw.decode().strip())
-        assert msg["command"] == ["osd-overlay"]
-        assert msg["format"] == "ass-events"
+        cmd = msg["command"]
+        assert isinstance(cmd, dict)
+        assert cmd["name"] == "osd-overlay"
+        assert cmd["format"] == "ass-events"
         # Verify ASS content survived JSON serialization intact
-        assert msg["data"] == ass
-        assert "TestDec v2.0.0" in msg["data"]
-        assert "Network: Ethernet" in msg["data"]
-        assert "192.168.1.50:8080" in msg["data"]
+        assert cmd["data"] == ass
+        assert "TestDec v2.0.0" in cmd["data"]
+        assert "Network: Ethernet" in cmd["data"]
+        assert "192.168.1.50:8080" in cmd["data"]
 
     @patch("pi_decoder.mpv_manager._get_version", return_value="2.0.0")
     async def test_hotspot_overlay_includes_credentials_in_ipc(self, _mock_ver):
@@ -1827,9 +1880,9 @@ class TestIdleOverlayIntegration:
 
         raw = writer.write.call_args[0][0]
         msg = json.loads(raw.decode().strip())
-        assert "Network: ChurchWiFi" in msg["data"]
-        assert "Password: welcome123" in msg["data"]
-        assert "Network: Hotspot" in msg["data"]
+        assert "Network: ChurchWiFi" in msg["command"]["data"]
+        assert "Password: welcome123" in msg["command"]["data"]
+        assert "Network: Hotspot" in msg["command"]["data"]
 
 
 # ── _get_network_info() direct tests ─────────────────────────────────────

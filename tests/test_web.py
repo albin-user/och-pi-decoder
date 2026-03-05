@@ -1120,6 +1120,23 @@ class TestLogsDownload:
         assert "log line 1" in resp.text
 
 
+class TestPreviewWebSocket:
+    def test_ws_preview_sends_binary(self, client, mock_mpv):
+        mock_mpv.take_screenshot = AsyncMock(return_value=b"\xff\xd8\xff\xe0fake-jpeg")
+        with client.websocket_connect("/ws/preview") as ws:
+            data = ws.receive_bytes()
+        assert data[:2] == b"\xff\xd8"  # JPEG magic bytes
+        assert len(data) > 0
+
+    def test_ws_preview_skips_when_no_screenshot(self, client, mock_mpv):
+        # First call returns None (no screenshot), second returns data
+        mock_mpv.take_screenshot = AsyncMock(side_effect=[None, b"\xff\xd8\xff\xe0jpeg"])
+        with client.websocket_connect("/ws/preview") as ws:
+            data = ws.receive_bytes()
+        # Should eventually receive the second screenshot
+        assert data[:2] == b"\xff\xd8"
+
+
 class TestRestartVideoError:
     def test_restart_video_error(self, client, mock_mpv):
         mock_mpv.restart = AsyncMock(side_effect=RuntimeError("mpv segfault"))

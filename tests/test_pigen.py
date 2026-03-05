@@ -127,6 +127,42 @@ class TestPigenConfigFiles:
         assert (files_dir / "20auto-upgrades").exists()
 
 
+class TestBuildCopiesAllFiles:
+    """Verify build.sh copies every deploy file that 00-run.sh references."""
+
+    def test_build_copies_all_referenced_deploy_files(self, pigen_dir: Path, deploy_dir: Path):
+        """Every file from deploy/ that 00-run.sh installs should be copied by build.sh."""
+        build_sh = (pigen_dir / "build.sh").read_text()
+        run_sh = (pigen_dir / "stage-pi-decoder" / "02-configure" / "00-run.sh").read_text()
+
+        # Files that 00-run.sh installs from files/ and that originate from deploy/
+        # (excludes files that are static in the stage directory like 50unattended-upgrades)
+        deploy_originated = [
+            "pi-decoder.service",
+            "pi-decoder-network.sh",
+            "pi-decoder-network.service",
+            "journald-pi-decoder.conf",
+            "sudoers-pi-decoder",
+            "captive-portal-dnsmasq.conf",
+            "10-pi-decoder-single-iface",
+        ]
+
+        for filename in deploy_originated:
+            # Verify the file is referenced in 00-run.sh
+            assert filename in run_sh, f"{filename} should be referenced in 00-run.sh"
+            # Verify build.sh copies it from deploy/
+            assert filename in build_sh, f"{filename} should be copied in build.sh"
+            # Verify the source file exists in deploy/
+            assert (deploy_dir / filename).exists(), f"{filename} should exist in deploy/"
+
+    def test_read_only_setup_in_configure_script(self, pigen_dir: Path):
+        """Verify read-only filesystem setup entries exist in 00-run.sh."""
+        run_sh = (pigen_dir / "stage-pi-decoder" / "02-configure" / "00-run.sh").read_text()
+        assert "tmpfs /var/log" in run_sh, "Should mount /var/log as tmpfs"
+        assert "remount,rw" in run_sh, "Should have dpkg remount-rw hook"
+        assert ",ro" in run_sh, "Should add ro to root mount"
+
+
 class TestPigenScriptContent:
     """Verify script content uses correct pi-gen conventions."""
 
