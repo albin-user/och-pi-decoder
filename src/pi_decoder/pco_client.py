@@ -713,9 +713,9 @@ class PCOClient:
         # When did this item actually start?
         live_start_str = current_item_time_obj["attributes"].get("live_start_at")
         item_end_time = None
-        if live_start_str and item_length:
+        if live_start_str:
             item_started = dateutil.parser.isoparse(live_start_str)
-            item_end_time = item_started + timedelta(seconds=item_length)
+            item_end_time = item_started + timedelta(seconds=item_length or 0)
 
         # Find position in service and sum remaining items
         current_item_id = current_item["id"]
