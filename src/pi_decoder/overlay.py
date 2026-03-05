@@ -273,8 +273,8 @@ def format_overlay(
         f"\\bord{_text_bord(fs)}\\shad0}}{countdown}",
     ]
 
-    # title line
-    fg_parts.append(f"\\N{{\\fs{fs_title}\\b0\\bord{_text_bord(fs_title)}}}{label}")
+    # title line (reset to white in case countdown was red)
+    fg_parts.append(f"\\N{{\\fs{fs_title}\\b0\\1c&HFFFFFF&\\bord{_text_bord(fs_title)}}}{label}")
 
     # count info lines for layout
     num_info = 0
@@ -282,7 +282,7 @@ def format_overlay(
     # description (item mode only)
     if cfg.show_description and cfg.timer_mode == "item" and status.item_description:
         desc = status.item_description[:50]
-        fg_parts.append(f"\\N{{\\fs{fs_info}\\bord{_text_bord(fs_info)}}}{desc}")
+        fg_parts.append(f"\\N{{\\fs{fs_info}\\1c&HFFFFFF&\\bord{_text_bord(fs_info)}}}{desc}")
         num_info += 1
 
     # schedule status
@@ -297,7 +297,7 @@ def format_overlay(
             end_label = _format_schedule_status(
                 svc_remaining, status.planned_service_end, now, local_tz
             )
-            fg_parts.append(f"\\N{{\\fs{fs_info}\\bord{_text_bord(fs_info)}}}{end_label}")
+            fg_parts.append(f"\\N{{\\fs{fs_info}\\1c&HFFFFFF&\\bord{_text_bord(fs_info)}}}{end_label}")
             num_info += 1
         except Exception:
             pass
