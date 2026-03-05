@@ -143,8 +143,8 @@
     // move focus to active panel
     var panel = document.getElementById("panel-" + idx);
     if (panel) panel.focus();
-    // connect/disconnect preview on Dashboard tab (index 0)
-    if (idx === 0) {
+    // connect/disconnect preview on Stream tab (index 1)
+    if (idx === 1) {
       connectPreview();
     } else {
       disconnectPreview();
@@ -469,8 +469,8 @@
       }
     };
     previewWs.onclose = function () {
-      // only reconnect if still on Dashboard tab
-      if (!pageClosing && activeTab === 0) {
+      // only reconnect if still on Stream tab
+      if (!pageClosing && activeTab === 1) {
         if (_previewReconnectTimer) clearTimeout(_previewReconnectTimer);
         _previewReconnectTimer = setTimeout(function () {
           _previewReconnectTimer = null;
