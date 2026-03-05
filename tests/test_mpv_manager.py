@@ -1315,7 +1315,6 @@ class TestHealthLoop:
         mgr.load_stream = AsyncMock()
 
         with patch("asyncio.sleep", side_effect=fake_sleep), \
-             patch("asyncio.wait_for", new_callable=AsyncMock), \
              patch("pi_decoder.mpv_manager._get_network_info", return_value={
                  "connection_type": "ethernet",
                  "ip": "192.168.1.1",
@@ -1348,7 +1347,6 @@ class TestHealthLoop:
         mgr.load_stream = AsyncMock()
 
         with patch("asyncio.sleep", side_effect=fake_sleep), \
-             patch("asyncio.wait_for", new_callable=AsyncMock), \
              patch("pi_decoder.mpv_manager._get_network_info", return_value={
                  "connection_type": "ethernet",
                  "ip": "192.168.1.1",
@@ -1377,7 +1375,6 @@ class TestHealthLoop:
         mgr.remove_overlay = AsyncMock()
 
         with patch("asyncio.sleep", side_effect=fake_sleep), \
-             patch("asyncio.wait_for", new_callable=AsyncMock), \
              patch("pi_decoder.mpv_manager._get_network_info", return_value={
                  "connection_type": "ethernet",
                  "ip": "192.168.1.1",
@@ -1412,7 +1409,6 @@ class TestHealthLoop:
         mgr.load_stream = AsyncMock()
 
         with patch("asyncio.sleep", side_effect=fake_sleep), \
-             patch("asyncio.wait_for", new_callable=AsyncMock), \
              patch("pi_decoder.mpv_manager._get_network_info", return_value={
                  "connection_type": "ethernet",
                  "ip": "192.168.1.1",
@@ -1449,7 +1445,6 @@ class TestHealthLoop:
         mgr.load_stream = AsyncMock()
 
         with patch("asyncio.sleep", side_effect=fake_sleep), \
-             patch("asyncio.wait_for", new_callable=AsyncMock), \
              patch("pi_decoder.mpv_manager._get_network_info", return_value={
                  "connection_type": "ethernet",
                  "ip": "192.168.1.1",
@@ -1508,7 +1503,6 @@ class TestFailoverBackupUrl:
         mgr.load_stream = AsyncMock()
 
         with patch("asyncio.sleep", side_effect=fake_sleep), \
-             patch("asyncio.wait_for", new_callable=AsyncMock), \
              patch("pi_decoder.mpv_manager._get_network_info", return_value={
                  "connection_type": "ethernet",
                  "ip": "192.168.1.1",
@@ -1549,7 +1543,6 @@ class TestFailoverBackupUrl:
         mgr.load_stream = AsyncMock()
 
         with patch("asyncio.sleep", side_effect=fake_sleep), \
-             patch("asyncio.wait_for", new_callable=AsyncMock), \
              patch("pi_decoder.mpv_manager._get_network_info", return_value={
                  "connection_type": "ethernet",
                  "ip": "192.168.1.1",

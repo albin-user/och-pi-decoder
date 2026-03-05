@@ -82,6 +82,7 @@ class MpvManager:
         self._stream_failures: int = 0
         self._using_backup: bool = False
         self._overlay_confirmed: bool = False
+        self._last_was_idle: bool = True  # Track idle→playing transition
 
     def _drm_mode(self) -> str | None:
         """Parse config hdmi_resolution into mpv --drm-mode format.
@@ -263,41 +264,50 @@ class MpvManager:
         await self._send(["loadfile", url])
 
     async def get_status(self) -> dict:
-        """Return a status dict for the web API."""
+        """Return a status dict for the web API.
+
+        All property queries are issued concurrently so the total IPC
+        round-trip time is ~one round-trip instead of 10 sequential ones.
+        """
         result: dict = {"alive": self.is_alive_sync()}
-        try:
-            pause = await self._get_property("pause")
-            idle = await self._get_property("idle-active")
-            path = await self._get_property("path")
-            result["paused"] = pause
-            result["idle"] = idle
-            result["playing"] = not pause and not idle
-            result["stream_url"] = path or ""
-        except Exception:
+
+        props = [
+            "pause", "idle-active", "path", "hwdec-current",
+            "estimated-vf-fps", "frame-drop-count",
+            "decoder-frame-drop-count",
+            "video-params/w", "video-params/h", "video-codec",
+        ]
+        values = await asyncio.gather(
+            *(self._get_property(p) for p in props),
+            return_exceptions=True,
+        )
+        pv = dict(zip(props, values))
+
+        def _v(key, default=None):
+            v = pv[key]
+            return default if isinstance(v, BaseException) else v
+
+        pause = _v("pause")
+        idle = _v("idle-active")
+        if pause is None and idle is None:
+            # IPC likely down — all queries failed
             result["playing"] = False
             result["idle"] = True
             result["stream_url"] = ""
-        # hwdec-current: what decoder mpv actually resolved to
-        try:
-            hwdec_cur = await self._get_property("hwdec-current")
-            result["hwdec_current"] = hwdec_cur or ""
-        except Exception:
-            result["hwdec_current"] = ""
-        # Video performance stats (only meaningful while playing)
-        try:
-            result["fps"] = await self._get_property("estimated-vf-fps") or 0
-            result["dropped_frames"] = await self._get_property("frame-drop-count") or 0
-            result["decoder_drops"] = await self._get_property("decoder-frame-drop-count") or 0
-            w = await self._get_property("video-params/w")
-            h = await self._get_property("video-params/h")
-            result["resolution"] = f"{w}x{h}" if w and h else ""
-            result["video_codec"] = await self._get_property("video-codec") or ""
-        except Exception:
-            result["fps"] = 0
-            result["dropped_frames"] = 0
-            result["decoder_drops"] = 0
-            result["resolution"] = ""
-            result["video_codec"] = ""
+        else:
+            result["paused"] = pause
+            result["idle"] = idle
+            result["playing"] = not pause and not idle
+            result["stream_url"] = _v("path", "") or ""
+
+        result["hwdec_current"] = _v("hwdec-current", "") or ""
+        result["fps"] = _v("estimated-vf-fps", 0) or 0
+        result["dropped_frames"] = _v("frame-drop-count", 0) or 0
+        result["decoder_drops"] = _v("decoder-frame-drop-count", 0) or 0
+        w = _v("video-params/w")
+        h = _v("video-params/h")
+        result["resolution"] = f"{w}x{h}" if w and h else ""
+        result["video_codec"] = _v("video-codec", "") or ""
         result["using_backup"] = self._using_backup
         return result
 
@@ -568,12 +578,16 @@ class MpvManager:
                     await self._disconnect_ipc()
                     await self.start()
                     continue
-                # IPC ping
+                # Stream health check — also serves as IPC liveness test.
+                # If get_status() succeeds, mpv is responsive (no separate
+                # ping needed).  Only fall back to a dedicated IPC ping +
+                # restart when get_status() raises.
                 try:
-                    await asyncio.wait_for(
-                        self._get_property("mpv-version"), timeout=10.0
+                    status = await asyncio.wait_for(
+                        self.get_status(), timeout=10.0,
                     )
                 except Exception:
+                    # get_status failed — mpv IPC may be unresponsive
                     log.warning("mpv IPC unresponsive — killing and restarting")
                     if self._process and self._process.returncode is None:
                         self._process.kill()
@@ -586,73 +600,64 @@ class MpvManager:
                     await self.start()
                     continue
 
-                # Stream health check: auto-retry if idle but we have a URL configured
-                try:
-                    status = await self.get_status()
-                    if status.get("idle"):
-                        # Build enhanced idle overlay
-                        try:
-                            net = await asyncio.get_event_loop().run_in_executor(
-                                None, _get_network_info,
-                            )
-                            ass = self._build_idle_overlay(net)
-                            await self.set_overlay(IP_OVERLAY_ID, ass)
+                if status.get("idle"):
+                    self._last_was_idle = True
+                    # Build enhanced idle overlay
+                    try:
+                        net = await asyncio.get_event_loop().run_in_executor(
+                            None, _get_network_info,
+                        )
+                        ass = self._build_idle_overlay(net)
+                        await self.set_overlay(IP_OVERLAY_ID, ass)
 
-                            # Auto-retry on network change
-                            conn_type = net.get("connection_type", "")
-                            if (self._last_connection_type
-                                    and conn_type != self._last_connection_type
-                                    and conn_type not in ("none", "hotspot")):
-                                log.info("Network changed (%s -> %s), resetting stream retry",
-                                         self._last_connection_type, conn_type)
-                                self.reset_stream_retry()
-                            self._last_connection_type = conn_type
-                        except Exception:
-                            log.warning("Idle overlay push failed", exc_info=True)
+                        # Auto-retry on network change
+                        conn_type = net.get("connection_type", "")
+                        if (self._last_connection_type
+                                and conn_type != self._last_connection_type
+                                and conn_type not in ("none", "hotspot")):
+                            log.info("Network changed (%s -> %s), resetting stream retry",
+                                     self._last_connection_type, conn_type)
+                            self.reset_stream_retry()
+                        self._last_connection_type = conn_type
+                    except Exception:
+                        log.warning("Idle overlay push failed", exc_info=True)
 
-                        if self._config.stream.url and not self._user_stopped:
-                            # Stream not playing but we have a URL configured
-                            now = time.monotonic()
-                            if now - self._last_stream_attempt > self._stream_retry_backoff:
-                                self._stream_failures += 1
-                                # Failover: after N consecutive failures, try backup URL
-                                use_url = self._config.stream.url
-                                backup = self._config.stream.backup_url
-                                if (backup and self._stream_failures >= _FAILOVER_THRESHOLD
-                                        and not self._using_backup):
-                                    log.warning(
-                                        "Stream failed %d times, switching to backup: %s",
-                                        self._stream_failures, backup,
-                                    )
-                                    use_url = backup
-                                    self._using_backup = True
-                                elif self._using_backup and backup:
-                                    use_url = backup
-                                log.info("Stream idle, attempting to reload: %s", use_url)
-                                self._last_stream_attempt = now
-                                try:
-                                    await self.load_stream(use_url)
-                                    # Increase backoff for next attempt (max 60s)
-                                    self._stream_retry_backoff = min(self._stream_retry_backoff * 1.5, 60.0)
-                                except Exception:
-                                    log.debug("Stream reload failed, will retry", exc_info=True)
-                    else:
-                        # Stream is playing, remove IP overlay and reset backoff
+                    if self._config.stream.url and not self._user_stopped:
+                        # Stream not playing but we have a URL configured
+                        now = time.monotonic()
+                        if now - self._last_stream_attempt > self._stream_retry_backoff:
+                            self._stream_failures += 1
+                            # Failover: after N consecutive failures, try backup URL
+                            use_url = self._config.stream.url
+                            backup = self._config.stream.backup_url
+                            if (backup and self._stream_failures >= _FAILOVER_THRESHOLD
+                                    and not self._using_backup):
+                                log.warning(
+                                    "Stream failed %d times, switching to backup: %s",
+                                    self._stream_failures, backup,
+                                )
+                                use_url = backup
+                                self._using_backup = True
+                            elif self._using_backup and backup:
+                                use_url = backup
+                            log.info("Stream idle, attempting to reload: %s", use_url)
+                            self._last_stream_attempt = now
+                            try:
+                                await self.load_stream(use_url)
+                                # Increase backoff for next attempt (max 60s)
+                                self._stream_retry_backoff = min(self._stream_retry_backoff * 1.5, 60.0)
+                            except Exception:
+                                log.debug("Stream reload failed, will retry", exc_info=True)
+                else:
+                    # Stream is playing — minimize IPC to avoid frame drops.
+                    # Remove idle overlay only on the idle→playing transition.
+                    if self._last_was_idle:
                         try:
                             await self.remove_overlay(IP_OVERLAY_ID)
                         except Exception:
                             pass
-                        self._stream_retry_backoff = 5.0
-                        self._stream_failures = 0
-                        # Track connection type for change detection
-                        try:
-                            net = await asyncio.get_event_loop().run_in_executor(
-                                None, _get_network_info,
-                            )
-                            self._last_connection_type = net.get("connection_type", "")
-                        except Exception:
-                            pass
-                except Exception:
-                    log.debug("Stream health check failed", exc_info=True)
+                        self._last_was_idle = False
+                    self._stream_retry_backoff = 5.0
+                    self._stream_failures = 0
         except asyncio.CancelledError:
             return

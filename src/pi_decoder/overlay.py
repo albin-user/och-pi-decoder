@@ -166,6 +166,20 @@ def _build_bg_events(
     """Build ass-events text for the background box layer using \\p1 drawing."""
     box_x, box_y, _, _ = _position_coords(position, layout, res_x, res_y)
     w, h = layout["xbord"], layout["ybord"]
+    # Trim the box away from the text anchor corner so the background
+    # is slightly smaller than the text area.
+    trim_x = int(w * 0.10)
+    trim_y = int(h * 0.20)
+    if "right" in position:
+        box_x += trim_x          # shrink from the left edge
+    else:
+        pass                      # left-anchored: keep left edge, shrink right (w shrinks)
+    if "bottom" in position:
+        box_y += trim_y           # shrink from the top edge
+    else:
+        pass                      # top-anchored: keep top edge, shrink bottom (h shrinks)
+    w -= trim_x
+    h -= trim_y
     return (
         f"{{\\an7\\pos({box_x},{box_y})\\p1"
         f"\\1c&H000000&\\1a{bg_alpha}"
