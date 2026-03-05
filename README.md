@@ -454,7 +454,9 @@ Shut down the Raspberry Pi. Requires physical access to power it back on.
 Real-time status updates. Sends a JSON message every 2 seconds with the same shape as `GET /api/status` plus `hostname` and `cec.power` fields. The `network.hotspot_password` field is stripped from broadcasts.
 
 #### `WS /ws/preview`
-Live video preview. Sends binary JPEG frames every 2 seconds.
+Live video preview. Sends binary JPEG frames every 3 seconds.
+
+> **Known limitation:** Capturing the preview screenshot causes minor frame drops on the HDMI output while the web UI preview is open.
 
 ---
 

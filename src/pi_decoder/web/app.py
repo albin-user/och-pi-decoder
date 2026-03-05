@@ -219,7 +219,7 @@ def create_app(
         network_info = {}
         try:
             from pi_decoder.network import get_network_info_sync
-            network_info = get_network_info_sync()
+            network_info = await asyncio.to_thread(get_network_info_sync)
         except Exception:
             pass
 
@@ -227,7 +227,7 @@ def create_app(
             "name": config.general.name,
             "mpv": mpv_status,
             "overlay": overlay_info,
-            "system": _system_info(),
+            "system": await asyncio.to_thread(_system_info),
             "network": network_info,
         }
 
@@ -944,7 +944,7 @@ def create_app(
                     "hostname": socket.gethostname(),
                     "mpv": mpv_status,
                     "overlay": overlay_info,
-                    "system": _system_info(),
+                    "system": await asyncio.to_thread(_system_info),
                     "network": network_info,
                     "cec": {"available": cec_avail, "power": cec_status},
                 })
@@ -964,7 +964,7 @@ def create_app(
                 data = await mpv.take_screenshot()
                 if data:
                     await ws.send_bytes(data)
-                await asyncio.sleep(2)
+                await asyncio.sleep(3)
         except WebSocketDisconnect:
             pass
         except Exception:

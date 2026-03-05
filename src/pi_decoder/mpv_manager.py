@@ -347,11 +347,16 @@ class MpvManager:
             await self._send(["screenshot-to-file", SCREENSHOT_PATH, "video"])
             # give mpv a moment to write the file
             await asyncio.sleep(0.3)
-            p = Path(SCREENSHOT_PATH)
-            if p.exists():
-                data = p.read_bytes()
-                p.unlink(missing_ok=True)
-                return data
+
+            def _read_and_remove() -> bytes | None:
+                p = Path(SCREENSHOT_PATH)
+                if p.exists():
+                    data = p.read_bytes()
+                    p.unlink(missing_ok=True)
+                    return data
+                return None
+
+            return await asyncio.to_thread(_read_and_remove)
         except Exception:
             log.warning("Screenshot failed", exc_info=True)
         return None
