@@ -313,8 +313,8 @@ def format_overlay(
         countdown = format_countdown(remaining)
         label = _truncate(status.plan_title or "Service", max_title)
     else:
-        remaining = 0
-        countdown = "--:--"
+        remaining = status.remaining_items_length or 0
+        countdown = format_countdown(remaining)
         label = _truncate(status.plan_title or "Service", max_title)
 
     # color: white normally, red if overtime
