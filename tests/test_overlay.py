@@ -10,9 +10,11 @@ from pi_decoder.overlay import (
     format_countdown,
     _ass_alpha,
     _format_schedule_status,
+    _overlay_layout,
     format_overlay,
     OverlayUpdater,
     OVERLAY_ID,
+    OVERLAY_FG_ID,
 )
 from pi_decoder.config import Config, OverlayConfig
 from pi_decoder.mpv_manager import MpvManager
@@ -126,6 +128,24 @@ class TestFormatScheduleStatus:
         assert "behind" in result
 
 
+class TestOverlayLayout:
+    """Test _overlay_layout() dimension calculations."""
+
+    def test_default_1080p(self):
+        layout = _overlay_layout(1920, 1080, 96, 38, 32, 1)
+        assert layout["edge_x"] == 28  # int(1920 * 0.015)
+        assert layout["edge_y"] == 16  # int(1080 * 0.015)
+        assert layout["xbord"] > 0
+        assert layout["ybord"] > 0
+        assert layout["text_margin_x"] == layout["edge_x"] + int(1920 * 0.008)
+        assert layout["text_margin_y"] == layout["edge_y"] + int(1080 * 0.008)
+
+    def test_more_info_lines_increases_height(self):
+        layout_1 = _overlay_layout(1920, 1080, 96, 38, 32, 1)
+        layout_2 = _overlay_layout(1920, 1080, 96, 38, 32, 2)
+        assert layout_2["ybord"] > layout_1["ybord"]
+
+
 class TestFormatOverlay:
     """Test full overlay formatting."""
 
@@ -135,8 +155,8 @@ class TestFormatOverlay:
 
     def test_not_live_shows_message(self, default_config):
         status = LiveStatus(is_live=False, message="Waiting...")
-        result = format_overlay(status, default_config)
-        assert "Waiting..." in result
+        _bg, fg = format_overlay(status, default_config)
+        assert "Waiting..." in fg
 
     def test_not_live_with_plan_title(self, default_config):
         status = LiveStatus(
@@ -144,9 +164,9 @@ class TestFormatOverlay:
             message="Not live",
             plan_title="Sunday Service",
         )
-        result = format_overlay(status, default_config)
-        assert "Not live" in result
-        assert "Sunday Service" in result
+        _bg, fg = format_overlay(status, default_config)
+        assert "Not live" in fg
+        assert "Sunday Service" in fg
 
     def test_finished_shows_overtime(self, default_config):
         now = datetime.now(timezone.utc)
@@ -156,8 +176,8 @@ class TestFormatOverlay:
             plan_title="Sunday Service",
             service_end_time=now - timedelta(minutes=5),
         )
-        result = format_overlay(status, default_config)
-        assert "OVERTIME" in result
+        _bg, fg = format_overlay(status, default_config)
+        assert "OVERTIME" in fg
 
     def test_live_shows_countdown(self, default_config):
         now = datetime.now(timezone.utc)
@@ -168,24 +188,24 @@ class TestFormatOverlay:
             item_end_time=now + timedelta(minutes=10),
             remaining_items_length=1800,
         )
-        result = format_overlay(status, default_config)
-        # Should contain formatted time and title
-        assert "Sunday Service" in result
+        _bg, fg = format_overlay(status, default_config)
+        assert "Sunday Service" in fg
 
     def test_position_tag_applied(self):
         status = LiveStatus(is_live=False, message="Test")
 
         for pos in ["top-left", "top-right", "bottom-left", "bottom-right"]:
             cfg = OverlayConfig(position=pos)
-            result = format_overlay(status, cfg)
-            # ASS position tags
-            assert "\\an" in result
+            bg, fg = format_overlay(status, cfg)
+            # Both layers are full ASS scripts containing the \an tag
+            assert "\\an" in fg
+            assert "\\an" in bg
 
     def test_font_size_applied(self):
         status = LiveStatus(is_live=False, message="Test")
         cfg = OverlayConfig(font_size=100, font_size_title=50, font_size_info=30)
-        result = format_overlay(status, cfg)
-        assert "\\fs50" in result  # font_size_title for message
+        _bg, fg = format_overlay(status, cfg)
+        assert "\\fs50" in fg  # font_size_title for message
 
     def test_item_mode_shows_item_info(self):
         now = datetime.now(timezone.utc)
@@ -196,9 +216,83 @@ class TestFormatOverlay:
             item_description="Pastor John",
             item_end_time=now + timedelta(minutes=25),
         )
-        result = format_overlay(status, cfg)
-        assert "Sermon" in result
-        assert "Pastor John" in result
+        _bg, fg = format_overlay(status, cfg)
+        assert "Sermon" in fg
+        assert "Pastor John" in fg
+
+    def test_bg_layer_has_box_border(self, default_config):
+        status = LiveStatus(is_live=False, message="Test")
+        bg, _fg = format_overlay(status, default_config)
+        # bg layer uses BorderStyle 3 (rectangle) with xbord/ybord
+        # Style line has border_style as the 16th field (0-indexed)
+        for line in bg.split("\n"):
+            if line.startswith("Style:"):
+                parts = line.split(",")
+                assert parts[15] == "3"  # BorderStyle field
+                break
+        assert "\\xbord" in bg
+        assert "\\ybord" in bg
+        assert "\\1a&HFF" in bg  # text invisible
+
+    def test_fg_layer_always_opaque(self, default_config):
+        status = LiveStatus(is_live=False, message="Test")
+        _bg, fg = format_overlay(status, default_config)
+        # fg layer uses BorderStyle 1 (outline)
+        for line in fg.split("\n"):
+            if line.startswith("Style:"):
+                parts = line.split(",")
+                assert parts[15] == "1"  # BorderStyle field
+                break
+        # fg layer should NOT have any alpha tags
+        assert "\\1a" not in fg
+        assert "\\3a" not in fg
+
+    def test_both_layers_are_full_ass_scripts(self, default_config):
+        status = LiveStatus(is_live=False, message="Test")
+        bg, fg = format_overlay(status, default_config)
+        for layer in (bg, fg):
+            assert "[Script Info]" in layer
+            assert "PlayResX:" in layer
+            assert "[V4+ Styles]" in layer
+            assert "[Events]" in layer
+            assert "Dialogue:" in layer
+
+    def test_resolution_parameter(self):
+        status = LiveStatus(is_live=False, message="Test")
+        cfg = OverlayConfig()
+        bg, fg = format_overlay(status, cfg, resolution=(3840, 2160))
+        assert "PlayResX: 3840" in bg
+        assert "PlayResY: 2160" in bg
+        assert "PlayResX: 3840" in fg
+
+    def test_margin_mapping_bottom_right(self):
+        status = LiveStatus(is_live=False, message="Test")
+        cfg = OverlayConfig(position="bottom-right")
+        bg, _fg = format_overlay(status, cfg)
+        # bottom-right: MarginR > 0, MarginL = 0 in style line
+        # Parse the Style line
+        for line in bg.split("\n"):
+            if line.startswith("Style:"):
+                parts = line.split(",")
+                # MarginL is index 19, MarginR is index 20
+                margin_l = int(parts[19])
+                margin_r = int(parts[20])
+                assert margin_l == 0
+                assert margin_r > 0
+                break
+
+    def test_margin_mapping_bottom_left(self):
+        status = LiveStatus(is_live=False, message="Test")
+        cfg = OverlayConfig(position="bottom-left")
+        bg, _fg = format_overlay(status, cfg)
+        for line in bg.split("\n"):
+            if line.startswith("Style:"):
+                parts = line.split(",")
+                margin_l = int(parts[19])
+                margin_r = int(parts[20])
+                assert margin_l > 0
+                assert margin_r == 0
+                break
 
 
 class TestOverlayUpdater:
@@ -209,6 +303,7 @@ class TestOverlayUpdater:
         mpv = MagicMock()
         mpv.set_overlay = AsyncMock()
         mpv.remove_overlay = AsyncMock()
+        mpv.overlay_resolution = (1920, 1080)
         return mpv
 
     @pytest.fixture
@@ -238,9 +333,24 @@ class TestOverlayUpdater:
         await asyncio.gather(updater.run(), stop_after_tick())
 
         mock_pco.get_live_status.assert_awaited()
-        mock_mpv.set_overlay.assert_awaited()
-        # Should remove overlay on stop
-        mock_mpv.remove_overlay.assert_awaited_with(OVERLAY_ID)
+        # Should push both bg + fg layers
+        assert mock_mpv.set_overlay.await_count >= 2
+        # Should remove both overlay layers on stop
+        assert mock_mpv.remove_overlay.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_run_passes_ass_script_true(self, mock_mpv, mock_pco, config):
+        updater = OverlayUpdater(mock_mpv, mock_pco, config)
+
+        async def stop_after_tick():
+            await asyncio.sleep(0.05)
+            updater._running = False
+
+        await asyncio.gather(updater.run(), stop_after_tick())
+
+        # All set_overlay calls should use ass_script=True
+        for call in mock_mpv.set_overlay.call_args_list:
+            assert call.kwargs.get("ass_script") is True
 
     @pytest.mark.asyncio
     async def test_run_handles_pco_error_without_crashing(self, mock_mpv, mock_pco, config):
@@ -265,7 +375,7 @@ class TestOverlayUpdater:
         assert updater.running is True
         await updater.stop()
         assert updater.running is False
-        mock_mpv.remove_overlay.assert_awaited_with(OVERLAY_ID)
+        assert mock_mpv.remove_overlay.await_count == 2
 
     @pytest.mark.asyncio
     async def test_skips_poll_on_credential_error(self, mock_mpv, mock_pco, config):
@@ -325,10 +435,10 @@ class TestOverlayUpdaterIntegration:
             item_end_time=now + timedelta(minutes=10),
             remaining_items_length=1800,
         )
-        ass = format_overlay(status, cfg.overlay)
+        _bg_ass, fg_ass = format_overlay(status, cfg.overlay, mgr.overlay_resolution)
 
         task = asyncio.create_task(self._resolve_after(mgr))
-        await mgr.set_overlay(OVERLAY_ID, ass)
+        await mgr.set_overlay(OVERLAY_FG_ID, fg_ass, ass_script=True)
         await task
 
         raw = writer.write.call_args[0][0]
@@ -336,9 +446,10 @@ class TestOverlayUpdaterIntegration:
         cmd = msg["command"]
         assert isinstance(cmd, dict)
         assert cmd["name"] == "osd-overlay"
-        assert cmd["format"] == "ass-events"
+        assert cmd["format"] == "ass"
         assert "Sunday Service" in cmd["data"]
         assert r"\an3" in cmd["data"]  # bottom-right position tag
+        assert "[Script Info]" in cmd["data"]
 
     async def test_not_live_overlay_to_ipc_payload(self):
         cfg = Config()
@@ -351,10 +462,10 @@ class TestOverlayUpdaterIntegration:
             message="No live service",
             plan_title="Evening Prayer",
         )
-        ass = format_overlay(status, cfg.overlay)
+        _bg_ass, fg_ass = format_overlay(status, cfg.overlay, mgr.overlay_resolution)
 
         task = asyncio.create_task(self._resolve_after(mgr))
-        await mgr.set_overlay(OVERLAY_ID, ass)
+        await mgr.set_overlay(OVERLAY_FG_ID, fg_ass, ass_script=True)
         await task
 
         raw = writer.write.call_args[0][0]
@@ -406,15 +517,17 @@ class TestOverlayUpdaterIntegration:
 
         # PCO was polled
         mock_pco.get_live_status.assert_awaited()
-        # Writer received IPC bytes — find the set_overlay call (not remove_overlay)
+        # Writer received IPC bytes — find the set_overlay call
         assert writer.write.called
         overlay_msgs = []
         for call in writer.write.call_args_list:
             raw = call[0][0]
             msg = json.loads(raw.decode().strip())
             cmd = msg.get("command", {})
-            if isinstance(cmd, dict) and cmd.get("format") == "ass-events":
+            if isinstance(cmd, dict) and cmd.get("format") == "ass":
                 overlay_msgs.append(msg)
-        assert len(overlay_msgs) >= 1, "Expected at least one set_overlay IPC call"
+        assert len(overlay_msgs) >= 2, "Expected bg + fg set_overlay IPC calls"
+        # Both layers are full ASS scripts
         assert overlay_msgs[0]["command"]["name"] == "osd-overlay"
-        assert "Morning Worship" in overlay_msgs[0]["command"]["data"]
+        assert "[Script Info]" in overlay_msgs[0]["command"]["data"]
+        assert "Morning Worship" in overlay_msgs[1]["command"]["data"]

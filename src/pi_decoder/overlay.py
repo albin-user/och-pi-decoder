@@ -12,12 +12,13 @@ except ImportError:
     from backports.zoneinfo import ZoneInfo  # type: ignore[no-redef]
 
 from pi_decoder.config import Config, OverlayConfig
-from pi_decoder.mpv_manager import MpvManager
+from pi_decoder.mpv_manager import MpvManager, build_ass_script
 from pi_decoder.pco_client import PCOClient, LiveStatus
 
 log = logging.getLogger(__name__)
 
-OVERLAY_ID = 1
+OVERLAY_ID = 1       # background box layer
+OVERLAY_FG_ID = 2    # foreground text layer
 
 # ASS \an tag mapping
 _POSITION_MAP = {
@@ -25,6 +26,15 @@ _POSITION_MAP = {
     "bottom-right": r"\an3",
     "top-left": r"\an7",
     "top-right": r"\an9",
+}
+
+# Position → which ASS style margin carries the horizontal offset
+# ("left" positions use MarginL, "right" positions use MarginR)
+_MARGIN_MAP = {
+    "bottom-left":  {"margin_l": True,  "margin_r": False},
+    "bottom-right": {"margin_l": False, "margin_r": True},
+    "top-left":     {"margin_l": True,  "margin_r": False},
+    "top-right":    {"margin_l": False, "margin_r": True},
 }
 
 
@@ -48,6 +58,11 @@ def _ass_alpha(transparency: float) -> str:
     alpha_byte = int((1.0 - transparency) * 255)
     alpha_byte = max(0, min(255, alpha_byte))
     return f"&H{alpha_byte:02X}"
+
+
+def _text_bord(fs: int) -> int:
+    """Thin text outline — ~2% of font size, minimum 1."""
+    return max(1, round(fs * 0.02))
 
 
 def _format_schedule_status(
@@ -78,32 +93,142 @@ def _format_schedule_status(
         return f"Ends {slip_minutes}m ahead at {end_time_str}"
 
 
-def format_overlay(status: LiveStatus, cfg: OverlayConfig) -> str:
-    """Build an ASS events string from LiveStatus + overlay config."""
+def _overlay_layout(
+    res_x: int, res_y: int,
+    fs: int, fs_title: int, fs_info: int,
+    num_info_lines: int,
+) -> dict:
+    """Calculate box size, edge gap, and text padding.
+
+    Returns dict with: xbord, ybord, edge_x, edge_y, text_margin_x, text_margin_y
+    """
+    # Edge gap: 1.5% of screen
+    edge_x = int(res_x * 0.015)
+    edge_y = int(res_y * 0.015)
+
+    # Inner padding: 0.8% of screen
+    pad_x = int(res_x * 0.008)
+    pad_y = int(res_y * 0.008)
+
+    # Box size (xbord/ybord)
+    char_w = 0.55
+    max_text_w = max(
+        fs * 3.5 * char_w,           # countdown "HH:MM:SS" (~8 chars)
+        fs_title * 20 * char_w,       # plan/item title (~20 chars)
+        fs_info * 28 * char_w,        # schedule info (~28 chars)
+    )
+    xbord = int(max_text_w + pad_x * 2)
+
+    # Height: sum of line heights + inner padding top & bottom
+    line_h = 1.3
+    text_h = fs * line_h + fs_title * line_h + fs_info * line_h * num_info_lines
+    ybord = int(text_h + pad_y * 2)
+
+    # Text margins: edge_gap + inner padding
+    text_margin_x = edge_x + pad_x
+    text_margin_y = edge_y + pad_y
+
+    return {
+        "xbord": xbord, "ybord": ybord,
+        "edge_x": edge_x, "edge_y": edge_y,
+        "text_margin_x": text_margin_x, "text_margin_y": text_margin_y,
+    }
+
+
+def _build_bg_script(
+    pos_tag: str,
+    position: str,
+    bg_alpha: str,
+    layout: dict,
+    res_x: int,
+    res_y: int,
+) -> str:
+    """Build a full ASS script for the background box layer (BorderStyle=3)."""
+    m = _MARGIN_MAP.get(position, _MARGIN_MAP["bottom-right"])
+    margin_l = layout["edge_x"] if m["margin_l"] else 0
+    margin_r = layout["edge_x"] if m["margin_r"] else 0
+    margin_v = layout["edge_y"]
+
+    event_text = (
+        f"{{{pos_tag}"
+        f"\\1a&HFF"
+        f"\\3c&H000000&\\3a{bg_alpha}"
+        f"\\xbord{layout['xbord']}\\ybord{layout['ybord']}"
+        f"\\shad0}} "
+    )
+
+    return build_ass_script(
+        event_text,
+        res_x=res_x, res_y=res_y,
+        border_style=3,
+        margin_l=margin_l, margin_r=margin_r, margin_v=margin_v,
+    )
+
+
+def _build_fg_script(
+    fg_event_text: str,
+    position: str,
+    layout: dict,
+    res_x: int,
+    res_y: int,
+) -> str:
+    """Build a full ASS script for the foreground text layer (BorderStyle=1)."""
+    m = _MARGIN_MAP.get(position, _MARGIN_MAP["bottom-right"])
+    margin_l = layout["text_margin_x"] if m["margin_l"] else 0
+    margin_r = layout["text_margin_x"] if m["margin_r"] else 0
+    margin_v = layout["text_margin_y"]
+
+    return build_ass_script(
+        fg_event_text,
+        res_x=res_x, res_y=res_y,
+        border_style=1,
+        margin_l=margin_l, margin_r=margin_r, margin_v=margin_v,
+    )
+
+
+def format_overlay(
+    status: LiveStatus,
+    cfg: OverlayConfig,
+    resolution: tuple[int, int] = (1920, 1080),
+) -> tuple[str, str]:
+    """Build (background_ass, foreground_ass) full ASS scripts.
+
+    Background layer: single invisible space with BorderStyle=3 rectangle.
+    Foreground layer: opaque text with thin outline (BorderStyle=1).
+    """
     pos_tag = _POSITION_MAP.get(cfg.position, r"\an3")
     fs = cfg.font_size
     bg_alpha = _ass_alpha(cfg.transparency)
+    res_x, res_y = resolution
 
     now = datetime.now(timezone.utc)
 
     fs_title = cfg.font_size_title
     fs_info = cfg.font_size_info
 
+    # ── Build foreground event text (same logic as before, without bg) ──
+
     if not status.is_live:
-        # Not live — show message
         msg = status.message or "Waiting..."
-        parts = [
-            f"{{{pos_tag}\\fs{fs_title}\\1c&HFFFFFF&\\3c&H000000&\\3a{bg_alpha}"
-            f"\\bord4\\shad0}}{msg}"
+        fg_parts = [
+            f"{{{pos_tag}\\fs{fs_title}"
+            f"\\1c&HFFFFFF&\\3c&H000000&"
+            f"\\bord{_text_bord(fs_title)}\\shad0}}{msg}"
         ]
         if status.plan_title:
-            parts.append(
-                f"\\N{{\\fs{fs_info}\\bord3}}{status.plan_title}"
+            fg_parts.append(
+                f"\\N{{\\fs{fs_info}\\bord{_text_bord(fs_info)}}}{status.plan_title}"
             )
-        return "".join(parts)
+        num_info = 1 if status.plan_title else 0
+        layout = _overlay_layout(res_x, res_y, fs_title, fs_title, fs_info, num_info)
+        # For not-live, the "countdown" line uses fs_title, so override
+        layout = _overlay_layout(res_x, res_y, fs_title, fs_info, fs_info, num_info)
+
+        bg = _build_bg_script(pos_tag, cfg.position, bg_alpha, layout, res_x, res_y)
+        fg = _build_fg_script("".join(fg_parts), cfg.position, layout, res_x, res_y)
+        return (bg, fg)
 
     if status.finished:
-        # Service is over
         overtime_text = "FINISHED"
         service_end = status.service_end_time
         if service_end:
@@ -111,13 +236,18 @@ def format_overlay(status: LiveStatus, cfg: OverlayConfig) -> str:
             if delta > 0:
                 overtime_text = f"-{format_countdown(delta)}"
 
-        return (
+        fg_parts = [
             f"{{{pos_tag}\\fs{fs}\\b1"
-            f"\\1c&H0000FF&\\3c&H000000&\\3a{bg_alpha}"
-            f"\\bord8\\shad0}}{overtime_text}"
-            f"\\N{{\\fs{fs_title}\\b0\\bord4}}{status.plan_title}"
-            f"\\N{{\\fs{fs_info}\\bord3}}OVERTIME"
-        )
+            f"\\1c&H0000FF&\\3c&H000000&"
+            f"\\bord{_text_bord(fs)}\\shad0}}{overtime_text}"
+            f"\\N{{\\fs{fs_title}\\b0\\bord{_text_bord(fs_title)}}}{status.plan_title}"
+            f"\\N{{\\fs{fs_info}\\bord{_text_bord(fs_info)}}}OVERTIME"
+        ]
+        layout = _overlay_layout(res_x, res_y, fs, fs_title, fs_info, 1)
+
+        bg = _build_bg_script(pos_tag, cfg.position, bg_alpha, layout, res_x, res_y)
+        fg = _build_fg_script("".join(fg_parts), cfg.position, layout, res_x, res_y)
+        return (bg, fg)
 
     # ── Live, not finished ───────────────────────────────────────────
 
@@ -126,18 +256,12 @@ def format_overlay(status: LiveStatus, cfg: OverlayConfig) -> str:
         countdown = format_countdown(remaining)
         label = status.item_title or "Current Item"
     elif status.item_end_time is not None:
-        # Dynamic service remaining, computed every second between PCO polls.
         item_remaining = (status.item_end_time - now).total_seconds()
         if item_remaining >= 0:
-            # Item on time: countdown = item remaining + future items
             remaining = item_remaining + status.remaining_items_length
         elif status.remaining_items_length > 0:
-            # Item overtime, more items after: freeze countdown at future
-            # items' total length.  "Ends HH:MM" extends because remaining
-            # stays constant while `now` advances each second.
             remaining = status.remaining_items_length
         else:
-            # Last item overtime: show negative countdown
             remaining = item_remaining
         countdown = format_countdown(remaining)
         label = status.plan_title or "Service"
@@ -152,25 +276,28 @@ def format_overlay(status: LiveStatus, cfg: OverlayConfig) -> str:
     else:
         color = "\\1c&HFFFFFF&"
 
-    parts = [
+    fg_parts = [
         f"{{{pos_tag}\\fs{fs}\\b1"
-        f"{color}\\3c&H000000&\\3a{bg_alpha}"
-        f"\\bord8\\shad0}}{countdown}",
+        f"{color}\\3c&H000000&"
+        f"\\bord{_text_bord(fs)}\\shad0}}{countdown}",
     ]
 
     # title line
-    parts.append(f"\\N{{\\fs{fs_title}\\b0\\bord4}}{label}")
+    fg_parts.append(f"\\N{{\\fs{fs_title}\\b0\\bord{_text_bord(fs_title)}}}{label}")
+
+    # count info lines for layout
+    num_info = 0
 
     # description (item mode only)
     if cfg.show_description and cfg.timer_mode == "item" and status.item_description:
         desc = status.item_description[:50]
-        parts.append(f"\\N{{\\fs{fs_info}\\bord3}}{desc}")
+        fg_parts.append(f"\\N{{\\fs{fs_info}\\bord{_text_bord(fs_info)}}}{desc}")
+        num_info += 1
 
-    # schedule status — shows "Ends Xm ahead/behind at HH:MM"
+    # schedule status
     if cfg.show_service_end and status.item_end_time is not None:
         try:
             local_tz = ZoneInfo(cfg.timezone)
-            # For item mode, compute service remaining separately
             if cfg.timer_mode == "item":
                 svc_item_remaining = max(0.0, (status.item_end_time - now).total_seconds())
                 svc_remaining = svc_item_remaining + status.remaining_items_length
@@ -179,11 +306,16 @@ def format_overlay(status: LiveStatus, cfg: OverlayConfig) -> str:
             end_label = _format_schedule_status(
                 svc_remaining, status.planned_service_end, now, local_tz
             )
-            parts.append(f"\\N{{\\fs{fs_info}\\bord3}}{end_label}")
+            fg_parts.append(f"\\N{{\\fs{fs_info}\\bord{_text_bord(fs_info)}}}{end_label}")
+            num_info += 1
         except Exception:
             pass
 
-    return "".join(parts)
+    layout = _overlay_layout(res_x, res_y, fs, fs_title, fs_info, max(1, num_info))
+
+    bg = _build_bg_script(pos_tag, cfg.position, bg_alpha, layout, res_x, res_y)
+    fg = _build_fg_script("".join(fg_parts), cfg.position, layout, res_x, res_y)
+    return (bg, fg)
 
 
 class OverlayUpdater:
@@ -215,47 +347,59 @@ class OverlayUpdater:
         """Main loop: poll PCO every N seconds, push overlay every 1 s."""
         self._running = True
         poll_interval = self._config.pco.poll_interval
-        seconds_since_poll = poll_interval  # trigger immediate first poll
+        import time as _time
+        next_tick = _time.monotonic()            # first tick runs immediately
+        last_poll = next_tick - poll_interval     # trigger immediate first poll
 
         try:
             while self._running:
+                now_mono = _time.monotonic()
+
                 # Poll PCO API periodically
-                if seconds_since_poll >= poll_interval:
+                if now_mono - last_poll >= poll_interval:
                     if self._pco.credential_error:
                         # Don't hammer API with bad credentials
-                        seconds_since_poll = 0
+                        last_poll = now_mono
                     else:
                         try:
                             self._last_status = await self._pco.get_live_status()
                         except Exception:
                             log.exception("PCO poll failed")
-                        seconds_since_poll = 0
+                        last_poll = now_mono
 
                 # Format and push overlay every second
                 if self._config.overlay.enabled:
                     try:
-                        ass = format_overlay(self._last_status, self._config.overlay)
-                        await self._mpv.set_overlay(OVERLAY_ID, ass)
+                        res = self._mpv.overlay_resolution
+                        bg_ass, fg_ass = format_overlay(
+                            self._last_status, self._config.overlay, res,
+                        )
+                        await asyncio.gather(
+                            self._mpv.set_overlay(OVERLAY_ID, bg_ass, ass_script=True),
+                            self._mpv.set_overlay(OVERLAY_FG_ID, fg_ass, ass_script=True),
+                        )
                     except Exception:
-                        import time as _time
-                        now = _time.monotonic()
-                        if now - self._last_overlay_warn > 30.0:
-                            self._last_overlay_warn = now
+                        now_t = _time.monotonic()
+                        if now_t - self._last_overlay_warn > 30.0:
+                            self._last_overlay_warn = now_t
                             log.warning("Overlay push failed", exc_info=True)
                         else:
                             log.debug("Overlay push failed", exc_info=True)
 
-                await asyncio.sleep(1)
-                seconds_since_poll += 1
+                # Schedule next tick at a fixed 1 s cadence
+                next_tick += 1.0
+                delay = max(0, next_tick - _time.monotonic())
+                await asyncio.sleep(delay)
         except asyncio.CancelledError:
             pass
         finally:
             self._running = False
-            # remove overlay on stop
-            try:
-                await self._mpv.remove_overlay(OVERLAY_ID)
-            except Exception:
-                pass
+            # remove both overlay layers on stop
+            for oid in (OVERLAY_ID, OVERLAY_FG_ID):
+                try:
+                    await self._mpv.remove_overlay(oid)
+                except Exception:
+                    pass
 
     async def stop(self) -> None:
         self._running = False
