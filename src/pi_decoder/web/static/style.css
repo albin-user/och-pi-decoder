@@ -918,6 +918,85 @@ input[type="range"] {
     border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
 }
 
+/* ── API reference ───────────────────────────────── */
+
+.api-ref > p {
+    margin-bottom: 12px;
+    font-size: 13px;
+    color: var(--color-text-muted);
+}
+
+.api-group {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    margin-bottom: 8px;
+}
+
+.api-group summary {
+    padding: 10px 14px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    color: var(--color-text-muted);
+    list-style: none;
+}
+
+.api-group summary::before {
+    content: "\25B8";
+    display: inline-block;
+    margin-right: 6px;
+    transition: transform .15s;
+}
+
+.api-group[open] summary::before {
+    transform: rotate(90deg);
+}
+
+.api-group summary::-webkit-details-marker { display: none; }
+
+.api-group summary:hover { color: var(--color-text); }
+
+.api-group[open] summary {
+    border-bottom: 1px solid var(--color-border);
+}
+
+.api-group table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.api-group th {
+    text-align: left;
+    padding: 6px 14px;
+    font-weight: 600;
+    font-size: 12px;
+    color: var(--color-text-muted);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.api-group td {
+    padding: 5px 14px;
+    border-bottom: 1px solid var(--color-border);
+    vertical-align: top;
+}
+
+.api-group tr:last-child td {
+    border-bottom: none;
+}
+
+.api-group td:first-child {
+    font-weight: 600;
+    font-size: 12px;
+    white-space: nowrap;
+    width: 1%;
+}
+
+.api-group td:nth-child(2) {
+    white-space: nowrap;
+    width: 1%;
+}
+
 .help {
     font-size: 12px;
     color: var(--color-text-muted);

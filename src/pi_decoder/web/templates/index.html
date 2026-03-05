@@ -864,14 +864,140 @@
             <dd>Use the TV control cards on the Dashboard tab to power on/off the TV, switch inputs, and adjust volume. These use CEC (Consumer Electronics Control) over HDMI.</dd>
 
             <dt>HTTP Endpoints</dt>
-            <dd>For automation (Bitfocus Companion, etc.):
-              <code>POST /api/cec/on</code>, <code>POST /api/cec/standby</code>,
-              <code>GET /api/cec/power-status</code>, <code>POST /api/cec/active-source</code>,
-              <code>POST /api/cec/input</code> (body: {"port": 2}),
-              <code>POST /api/cec/volume-up</code>, <code>POST /api/cec/volume-down</code>,
-              <code>POST /api/cec/mute</code>
-            </dd>
+            <dd>CEC endpoints are available for automation tools. See the <strong>HTTP API Reference</strong> section below for the full list.</dd>
           </dl>
+        </div>
+
+        <h3 class="section-heading">HTTP API Reference</h3>
+
+        <div class="help-section api-ref">
+          <p>All endpoints are relative to the pi-decoder base URL. JSON request bodies should use <code>Content-Type: application/json</code>.</p>
+
+          <details class="api-group">
+            <summary>Status &amp; Info</summary>
+            <table>
+              <thead><tr><th>Method</th><th>Endpoint</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td>GET</td><td><code>/api/status</code></td><td>Full system status (MPV, overlay, network, CPU, memory, temp, uptime)</td></tr>
+                <tr><td>GET</td><td><code>/api/health</code></td><td>Health check &mdash; returns <code>{"status":"ok"}</code></td></tr>
+                <tr><td>GET</td><td><code>/api/version</code></td><td>Installed pi-decoder version</td></tr>
+                <tr><td>GET</td><td><code>/api/screenshot</code></td><td>Captures a JPEG screenshot from the video stream</td></tr>
+              </tbody>
+            </table>
+          </details>
+
+          <details class="api-group">
+            <summary>Playback Control</summary>
+            <table>
+              <thead><tr><th>Method</th><th>Endpoint</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td>POST</td><td><code>/api/restart/video</code></td><td>Restart the video stream</td></tr>
+                <tr><td>POST</td><td><code>/api/stop/video</code></td><td>Stop the video stream</td></tr>
+                <tr><td>POST</td><td><code>/api/restart/overlay</code></td><td>Restart the overlay task</td></tr>
+                <tr><td>POST</td><td><code>/api/restart/all</code></td><td>Restart video and overlay together</td></tr>
+              </tbody>
+            </table>
+          </details>
+
+          <details class="api-group">
+            <summary>Stream</summary>
+            <table>
+              <thead><tr><th>Method</th><th>Endpoint</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td>GET</td><td><code>/api/stream/presets</code></td><td>List saved stream URL presets</td></tr>
+                <tr><td>POST</td><td><code>/api/stream/presets</code></td><td>Save stream URL presets (max 10)</td></tr>
+                <tr><td>POST</td><td><code>/api/stream/switch</code></td><td>Switch to a preset stream URL</td></tr>
+                <tr><td>POST</td><td><code>/api/stream/switch-back</code></td><td>Switch back to primary stream URL</td></tr>
+                <tr><td>POST</td><td><code>/api/config/stream</code></td><td>Update stream URL, backup URL, caching, hwdec, max resolution</td></tr>
+              </tbody>
+            </table>
+          </details>
+
+          <details class="api-group">
+            <summary>CEC TV Control</summary>
+            <table>
+              <thead><tr><th>Method</th><th>Endpoint</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td>POST</td><td><code>/api/cec/on</code></td><td>Power on the TV</td></tr>
+                <tr><td>POST</td><td><code>/api/cec/standby</code></td><td>Put the TV on standby</td></tr>
+                <tr><td>GET</td><td><code>/api/cec/power-status</code></td><td>Check TV power status</td></tr>
+                <tr><td>POST</td><td><code>/api/cec/active-source</code></td><td>Make decoder the active source</td></tr>
+                <tr><td>POST</td><td><code>/api/cec/input</code></td><td>Set TV input port &mdash; body: <code>{"port": 2}</code></td></tr>
+                <tr><td>POST</td><td><code>/api/cec/volume-up</code></td><td>Increase TV volume</td></tr>
+                <tr><td>POST</td><td><code>/api/cec/volume-down</code></td><td>Decrease TV volume</td></tr>
+                <tr><td>POST</td><td><code>/api/cec/mute</code></td><td>Mute/unmute the TV</td></tr>
+              </tbody>
+            </table>
+          </details>
+
+          <details class="api-group">
+            <summary>Overlay &amp; PCO</summary>
+            <table>
+              <thead><tr><th>Method</th><th>Endpoint</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td>POST</td><td><code>/api/config/overlay</code></td><td>Update overlay display settings</td></tr>
+                <tr><td>POST</td><td><code>/api/config/pco</code></td><td>Set PCO credentials and options</td></tr>
+                <tr><td>POST</td><td><code>/api/test-pco</code></td><td>Test PCO credentials without saving</td></tr>
+                <tr><td>GET</td><td><code>/api/service-types</code></td><td>List available PCO service types</td></tr>
+              </tbody>
+            </table>
+          </details>
+
+          <details class="api-group">
+            <summary>Network</summary>
+            <table>
+              <thead><tr><th>Method</th><th>Endpoint</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td>GET</td><td><code>/api/network/status</code></td><td>Current network connection info</td></tr>
+                <tr><td>GET</td><td><code>/api/network/wifi-scan</code></td><td>Scan for available WiFi networks</td></tr>
+                <tr><td>POST</td><td><code>/api/network/wifi-connect</code></td><td>Connect to a WiFi network</td></tr>
+                <tr><td>GET</td><td><code>/api/network/wifi/saved</code></td><td>List saved WiFi networks</td></tr>
+                <tr><td>POST</td><td><code>/api/network/wifi/forget</code></td><td>Forget a saved WiFi network</td></tr>
+                <tr><td>POST</td><td><code>/api/network/hotspot/start</code></td><td>Start WiFi hotspot</td></tr>
+                <tr><td>POST</td><td><code>/api/network/hotspot/stop</code></td><td>Stop WiFi hotspot</td></tr>
+                <tr><td>POST</td><td><code>/api/network/ping</code></td><td>Ping a host (defaults to stream host)</td></tr>
+                <tr><td>GET</td><td><code>/api/network/speedtest</code></td><td>Get last speedtest result</td></tr>
+                <tr><td>POST</td><td><code>/api/network/speedtest</code></td><td>Run a new speedtest</td></tr>
+              </tbody>
+            </table>
+          </details>
+
+          <details class="api-group">
+            <summary>Display</summary>
+            <table>
+              <thead><tr><th>Method</th><th>Endpoint</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td>GET</td><td><code>/api/display/modes</code></td><td>List available HDMI resolutions</td></tr>
+                <tr><td>POST</td><td><code>/api/display/resolution</code></td><td>Set resolution &mdash; e.g. <code>1920x1080@60</code></td></tr>
+              </tbody>
+            </table>
+          </details>
+
+          <details class="api-group">
+            <summary>System</summary>
+            <table>
+              <thead><tr><th>Method</th><th>Endpoint</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td>POST</td><td><code>/api/reboot</code></td><td>Reboot the system</td></tr>
+                <tr><td>POST</td><td><code>/api/shutdown</code></td><td>Power off the system</td></tr>
+                <tr><td>GET</td><td><code>/api/logs</code></td><td>Retrieve journal logs (default 50 lines)</td></tr>
+                <tr><td>GET</td><td><code>/api/logs/download</code></td><td>Download logs as a text file</td></tr>
+                <tr><td>GET</td><td><code>/api/config/export</code></td><td>Export config as TOML (secrets stripped)</td></tr>
+                <tr><td>POST</td><td><code>/api/config/import</code></td><td>Import a TOML config file</td></tr>
+              </tbody>
+            </table>
+          </details>
+
+          <details class="api-group">
+            <summary>WebSocket</summary>
+            <table>
+              <thead><tr><th>Endpoint</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td><code>ws://&lt;host&gt;/ws/status</code></td><td>Real-time status broadcast (every 2s)</td></tr>
+                <tr><td><code>ws://&lt;host&gt;/ws/preview</code></td><td>Live JPEG video preview (every 3s)</td></tr>
+              </tbody>
+            </table>
+          </details>
         </div>
 
         <h3 class="section-heading">Config Backup &amp; Restore</h3>
