@@ -57,37 +57,6 @@ def _get_network_info() -> dict:
         return info
 
 
-def build_ass_script(
-    event_text: str,
-    *,
-    res_x: int,
-    res_y: int,
-    border_style: int = 1,
-    margin_l: int = 0,
-    margin_r: int = 0,
-    margin_v: int = 0,
-) -> str:
-    """Build a full ASS script with one Dialogue line.
-
-    *border_style* 3 renders a filled rectangle (background box);
-    *border_style* 1 renders a thin outline (foreground text).
-    """
-    return (
-        f"[Script Info]\nPlayResX: {res_x}\nPlayResY: {res_y}\n\n"
-        f"[V4+ Styles]\n"
-        f"Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, "
-        f"OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, "
-        f"ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
-        f"Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        f"Style: Default,Arial,40,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,"
-        f"0,0,0,0,100,100,0,0,{border_style},0,0,5,"
-        f"{margin_l},{margin_r},{margin_v},1\n\n"
-        f"[Events]\n"
-        f"Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
-        f"Dialogue: 0,0:00:00.00,99:00:00.00,Default,,0,0,0,,{event_text}\n"
-    )
-
-
 class MpvManager:
     """Manage an mpv child process and communicate via its JSON IPC socket."""
 
@@ -344,26 +313,19 @@ class MpvManager:
         """Public accessor for the overlay resolution."""
         return self._overlay_resolution()
 
-    async def set_overlay(
-        self, overlay_id: int, ass_text: str, *, ass_script: bool = False,
-    ) -> None:
-        """Push an ASS overlay using osd-overlay with explicit resolution.
-
-        When *ass_script* is True the data is a full ASS script and format
-        is ``"ass"``; otherwise ``"ass-events"`` (inline tags only).
-        """
+    async def set_overlay(self, overlay_id: int, ass_text: str) -> None:
+        """Push an ASS overlay using osd-overlay (ass-events format)."""
         res_x, res_y = self._overlay_resolution()
-        fmt = "ass" if ass_script else "ass-events"
         await self._send(
             ["osd-overlay"],
-            id=overlay_id, format=fmt, data=ass_text,
+            id=overlay_id, format="ass-events", data=ass_text,
             res_x=res_x, res_y=res_y,
         )
         if not self._overlay_confirmed:
             self._overlay_confirmed = True
             log.info(
-                "osd-overlay accepted (id=%d, fmt=%s, res=%dx%d, data_len=%d)",
-                overlay_id, fmt, res_x, res_y, len(ass_text),
+                "osd-overlay accepted (id=%d, res=%dx%d, data_len=%d)",
+                overlay_id, res_x, res_y, len(ass_text),
             )
 
     async def remove_overlay(self, overlay_id: int) -> None:

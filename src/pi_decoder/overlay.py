@@ -12,7 +12,7 @@ except ImportError:
     from backports.zoneinfo import ZoneInfo  # type: ignore[no-redef]
 
 from pi_decoder.config import Config, OverlayConfig
-from pi_decoder.mpv_manager import MpvManager, build_ass_script
+from pi_decoder.mpv_manager import MpvManager
 from pi_decoder.pco_client import PCOClient, LiveStatus
 
 log = logging.getLogger(__name__)
@@ -28,14 +28,6 @@ _POSITION_MAP = {
     "top-right": r"\an9",
 }
 
-# Position → which ASS style margin carries the horizontal offset
-# ("left" positions use MarginL, "right" positions use MarginR)
-_MARGIN_MAP = {
-    "bottom-left":  {"margin_l": True,  "margin_r": False},
-    "bottom-right": {"margin_l": False, "margin_r": True},
-    "top-left":     {"margin_l": True,  "margin_r": False},
-    "top-right":    {"margin_l": False, "margin_r": True},
-}
 
 
 def format_countdown(total_seconds: float) -> str:
@@ -135,55 +127,54 @@ def _overlay_layout(
     }
 
 
-def _build_bg_script(
-    pos_tag: str,
+def _position_coords(
+    position: str, layout: dict, res_x: int, res_y: int,
+) -> tuple[int, int, int, int]:
+    """Return (box_x, box_y, text_x, text_y)."""
+    edge_x, edge_y = layout["edge_x"], layout["edge_y"]
+    xbord, ybord = layout["xbord"], layout["ybord"]
+
+    # Box top-left corner
+    box_x = edge_x if "left" in position else res_x - edge_x - xbord
+    box_y = edge_y if "top" in position else res_y - edge_y - ybord
+
+    # Text anchor point (matches \an tag alignment)
+    tmx, tmy = layout["text_margin_x"], layout["text_margin_y"]
+    text_x = tmx if "left" in position else res_x - tmx
+    text_y = tmy if "top" in position else res_y - tmy
+
+    return box_x, box_y, text_x, text_y
+
+
+def _build_bg_events(
     position: str,
     bg_alpha: str,
     layout: dict,
     res_x: int,
     res_y: int,
 ) -> str:
-    """Build a full ASS script for the background box layer (BorderStyle=3)."""
-    m = _MARGIN_MAP.get(position, _MARGIN_MAP["bottom-right"])
-    margin_l = layout["edge_x"] if m["margin_l"] else 0
-    margin_r = layout["edge_x"] if m["margin_r"] else 0
-    margin_v = layout["edge_y"]
-
-    event_text = (
-        f"{{{pos_tag}"
-        f"\\1a&HFF"
-        f"\\3c&H000000&\\3a{bg_alpha}"
-        f"\\xbord{layout['xbord']}\\ybord{layout['ybord']}"
-        f"\\shad0}} "
-    )
-
-    return build_ass_script(
-        event_text,
-        res_x=res_x, res_y=res_y,
-        border_style=3,
-        margin_l=margin_l, margin_r=margin_r, margin_v=margin_v,
+    """Build ass-events text for the background box layer using \\p1 drawing."""
+    box_x, box_y, _, _ = _position_coords(position, layout, res_x, res_y)
+    w, h = layout["xbord"], layout["ybord"]
+    return (
+        f"{{\\an7\\pos({box_x},{box_y})\\p1"
+        f"\\1c&H000000&\\1a{bg_alpha}"
+        f"\\bord0\\shad0}}"
+        f"m 0 0 l {w} 0 {w} {h} 0 {h}"
     )
 
 
-def _build_fg_script(
+def _build_fg_events(
     fg_event_text: str,
     position: str,
     layout: dict,
     res_x: int,
     res_y: int,
 ) -> str:
-    """Build a full ASS script for the foreground text layer (BorderStyle=1)."""
-    m = _MARGIN_MAP.get(position, _MARGIN_MAP["bottom-right"])
-    margin_l = layout["text_margin_x"] if m["margin_l"] else 0
-    margin_r = layout["text_margin_x"] if m["margin_r"] else 0
-    margin_v = layout["text_margin_y"]
-
-    return build_ass_script(
-        fg_event_text,
-        res_x=res_x, res_y=res_y,
-        border_style=1,
-        margin_l=margin_l, margin_r=margin_r, margin_v=margin_v,
-    )
+    """Build ass-events text for the foreground text layer with explicit \\pos."""
+    _, _, text_x, text_y = _position_coords(position, layout, res_x, res_y)
+    # Insert \pos after opening { before the existing override tags
+    return "{" + f"\\pos({text_x},{text_y})" + fg_event_text[1:]
 
 
 def format_overlay(
@@ -191,10 +182,10 @@ def format_overlay(
     cfg: OverlayConfig,
     resolution: tuple[int, int] = (1920, 1080),
 ) -> tuple[str, str]:
-    """Build (background_ass, foreground_ass) full ASS scripts.
+    """Build (background_events, foreground_events) ass-events strings.
 
-    Background layer: single invisible space with BorderStyle=3 rectangle.
-    Foreground layer: opaque text with thin outline (BorderStyle=1).
+    Background layer: \\p1 drawing of a semi-transparent filled rectangle.
+    Foreground layer: positioned text with thin outline.
     """
     pos_tag = _POSITION_MAP.get(cfg.position, r"\an3")
     fs = cfg.font_size
@@ -224,8 +215,8 @@ def format_overlay(
         # For not-live, the "countdown" line uses fs_title, so override
         layout = _overlay_layout(res_x, res_y, fs_title, fs_info, fs_info, num_info)
 
-        bg = _build_bg_script(pos_tag, cfg.position, bg_alpha, layout, res_x, res_y)
-        fg = _build_fg_script("".join(fg_parts), cfg.position, layout, res_x, res_y)
+        bg = _build_bg_events(cfg.position, bg_alpha, layout, res_x, res_y)
+        fg = _build_fg_events("".join(fg_parts), cfg.position, layout, res_x, res_y)
         return (bg, fg)
 
     if status.finished:
@@ -245,8 +236,8 @@ def format_overlay(
         ]
         layout = _overlay_layout(res_x, res_y, fs, fs_title, fs_info, 1)
 
-        bg = _build_bg_script(pos_tag, cfg.position, bg_alpha, layout, res_x, res_y)
-        fg = _build_fg_script("".join(fg_parts), cfg.position, layout, res_x, res_y)
+        bg = _build_bg_events(cfg.position, bg_alpha, layout, res_x, res_y)
+        fg = _build_fg_events("".join(fg_parts), cfg.position, layout, res_x, res_y)
         return (bg, fg)
 
     # ── Live, not finished ───────────────────────────────────────────
@@ -313,8 +304,8 @@ def format_overlay(
 
     layout = _overlay_layout(res_x, res_y, fs, fs_title, fs_info, max(1, num_info))
 
-    bg = _build_bg_script(pos_tag, cfg.position, bg_alpha, layout, res_x, res_y)
-    fg = _build_fg_script("".join(fg_parts), cfg.position, layout, res_x, res_y)
+    bg = _build_bg_events(cfg.position, bg_alpha, layout, res_x, res_y)
+    fg = _build_fg_events("".join(fg_parts), cfg.position, layout, res_x, res_y)
     return (bg, fg)
 
 
@@ -375,8 +366,8 @@ class OverlayUpdater:
                             self._last_status, self._config.overlay, res,
                         )
                         await asyncio.gather(
-                            self._mpv.set_overlay(OVERLAY_ID, bg_ass, ass_script=True),
-                            self._mpv.set_overlay(OVERLAY_FG_ID, fg_ass, ass_script=True),
+                            self._mpv.set_overlay(OVERLAY_ID, bg_ass),
+                            self._mpv.set_overlay(OVERLAY_FG_ID, fg_ass),
                         )
                     except Exception:
                         now_t = _time.monotonic()

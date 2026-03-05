@@ -220,79 +220,45 @@ class TestFormatOverlay:
         assert "Sermon" in fg
         assert "Pastor John" in fg
 
-    def test_bg_layer_has_box_border(self, default_config):
+    def test_bg_layer_uses_drawing_mode(self, default_config):
         status = LiveStatus(is_live=False, message="Test")
         bg, _fg = format_overlay(status, default_config)
-        # bg layer uses BorderStyle 3 (rectangle) with xbord/ybord
-        # Style line has border_style as the 16th field (0-indexed)
-        for line in bg.split("\n"):
-            if line.startswith("Style:"):
-                parts = line.split(",")
-                assert parts[15] == "3"  # BorderStyle field
-                break
-        assert "\\xbord" in bg
-        assert "\\ybord" in bg
-        assert "\\1a&HFF" in bg  # text invisible
+        assert "\\p1" in bg
+        assert "m 0 0 l" in bg
+        assert "\\1c&H000000" in bg
+        assert "\\1a" in bg
 
-    def test_fg_layer_always_opaque(self, default_config):
+    def test_fg_layer_has_pos(self, default_config):
         status = LiveStatus(is_live=False, message="Test")
         _bg, fg = format_overlay(status, default_config)
-        # fg layer uses BorderStyle 1 (outline)
-        for line in fg.split("\n"):
-            if line.startswith("Style:"):
-                parts = line.split(",")
-                assert parts[15] == "1"  # BorderStyle field
-                break
-        # fg layer should NOT have any alpha tags
-        assert "\\1a" not in fg
-        assert "\\3a" not in fg
+        assert "\\pos(" in fg
 
-    def test_both_layers_are_full_ass_scripts(self, default_config):
-        status = LiveStatus(is_live=False, message="Test")
-        bg, fg = format_overlay(status, default_config)
-        for layer in (bg, fg):
-            assert "[Script Info]" in layer
-            assert "PlayResX:" in layer
-            assert "[V4+ Styles]" in layer
-            assert "[Events]" in layer
-            assert "Dialogue:" in layer
-
-    def test_resolution_parameter(self):
-        status = LiveStatus(is_live=False, message="Test")
-        cfg = OverlayConfig()
-        bg, fg = format_overlay(status, cfg, resolution=(3840, 2160))
-        assert "PlayResX: 3840" in bg
-        assert "PlayResY: 2160" in bg
-        assert "PlayResX: 3840" in fg
-
-    def test_margin_mapping_bottom_right(self):
+    def test_position_bottom_right_coords(self):
         status = LiveStatus(is_live=False, message="Test")
         cfg = OverlayConfig(position="bottom-right")
-        bg, _fg = format_overlay(status, cfg)
-        # bottom-right: MarginR > 0, MarginL = 0 in style line
-        # Parse the Style line
-        for line in bg.split("\n"):
-            if line.startswith("Style:"):
-                parts = line.split(",")
-                # MarginL is index 19, MarginR is index 20
-                margin_l = int(parts[19])
-                margin_r = int(parts[20])
-                assert margin_l == 0
-                assert margin_r > 0
-                break
+        bg, fg = format_overlay(status, cfg, resolution=(1920, 1080))
+        # bg box should be near bottom-right (x > half, y > half)
+        import re
+        m = re.search(r"\\pos\((\d+),(\d+)\)", bg)
+        assert m, "bg should have \\pos"
+        box_x, box_y = int(m.group(1)), int(m.group(2))
+        assert box_x > 960, f"box_x={box_x} should be > 960 for bottom-right"
+        # fg text should also be near right side
+        m2 = re.search(r"\\pos\((\d+),(\d+)\)", fg)
+        assert m2, "fg should have \\pos"
+        text_x = int(m2.group(1))
+        assert text_x > 960, f"text_x={text_x} should be > 960 for bottom-right"
 
-    def test_margin_mapping_bottom_left(self):
+    def test_position_top_left_coords(self):
         status = LiveStatus(is_live=False, message="Test")
-        cfg = OverlayConfig(position="bottom-left")
-        bg, _fg = format_overlay(status, cfg)
-        for line in bg.split("\n"):
-            if line.startswith("Style:"):
-                parts = line.split(",")
-                margin_l = int(parts[19])
-                margin_r = int(parts[20])
-                assert margin_l > 0
-                assert margin_r == 0
-                break
+        cfg = OverlayConfig(position="top-left")
+        bg, fg = format_overlay(status, cfg, resolution=(1920, 1080))
+        import re
+        m = re.search(r"\\pos\((\d+),(\d+)\)", bg)
+        assert m, "bg should have \\pos"
+        box_x, box_y = int(m.group(1)), int(m.group(2))
+        assert box_x < 100, f"box_x={box_x} should be small for top-left"
+        assert box_y < 100, f"box_y={box_y} should be small for top-left"
 
 
 class TestOverlayUpdater:
@@ -337,20 +303,6 @@ class TestOverlayUpdater:
         assert mock_mpv.set_overlay.await_count >= 2
         # Should remove both overlay layers on stop
         assert mock_mpv.remove_overlay.await_count == 2
-
-    @pytest.mark.asyncio
-    async def test_run_passes_ass_script_true(self, mock_mpv, mock_pco, config):
-        updater = OverlayUpdater(mock_mpv, mock_pco, config)
-
-        async def stop_after_tick():
-            await asyncio.sleep(0.05)
-            updater._running = False
-
-        await asyncio.gather(updater.run(), stop_after_tick())
-
-        # All set_overlay calls should use ass_script=True
-        for call in mock_mpv.set_overlay.call_args_list:
-            assert call.kwargs.get("ass_script") is True
 
     @pytest.mark.asyncio
     async def test_run_handles_pco_error_without_crashing(self, mock_mpv, mock_pco, config):
@@ -438,7 +390,7 @@ class TestOverlayUpdaterIntegration:
         _bg_ass, fg_ass = format_overlay(status, cfg.overlay, mgr.overlay_resolution)
 
         task = asyncio.create_task(self._resolve_after(mgr))
-        await mgr.set_overlay(OVERLAY_FG_ID, fg_ass, ass_script=True)
+        await mgr.set_overlay(OVERLAY_FG_ID, fg_ass)
         await task
 
         raw = writer.write.call_args[0][0]
@@ -446,10 +398,10 @@ class TestOverlayUpdaterIntegration:
         cmd = msg["command"]
         assert isinstance(cmd, dict)
         assert cmd["name"] == "osd-overlay"
-        assert cmd["format"] == "ass"
+        assert cmd["format"] == "ass-events"
         assert "Sunday Service" in cmd["data"]
         assert r"\an3" in cmd["data"]  # bottom-right position tag
-        assert "[Script Info]" in cmd["data"]
+        assert r"\pos(" in cmd["data"]
 
     async def test_not_live_overlay_to_ipc_payload(self):
         cfg = Config()
@@ -465,7 +417,7 @@ class TestOverlayUpdaterIntegration:
         _bg_ass, fg_ass = format_overlay(status, cfg.overlay, mgr.overlay_resolution)
 
         task = asyncio.create_task(self._resolve_after(mgr))
-        await mgr.set_overlay(OVERLAY_FG_ID, fg_ass, ass_script=True)
+        await mgr.set_overlay(OVERLAY_FG_ID, fg_ass)
         await task
 
         raw = writer.write.call_args[0][0]
@@ -524,10 +476,11 @@ class TestOverlayUpdaterIntegration:
             raw = call[0][0]
             msg = json.loads(raw.decode().strip())
             cmd = msg.get("command", {})
-            if isinstance(cmd, dict) and cmd.get("format") == "ass":
+            if isinstance(cmd, dict) and cmd.get("format") == "ass-events":
                 overlay_msgs.append(msg)
         assert len(overlay_msgs) >= 2, "Expected bg + fg set_overlay IPC calls"
-        # Both layers are full ASS scripts
         assert overlay_msgs[0]["command"]["name"] == "osd-overlay"
-        assert "[Script Info]" in overlay_msgs[0]["command"]["data"]
+        # bg layer uses \p1 drawing mode
+        assert "\\p1" in overlay_msgs[0]["command"]["data"]
+        # fg layer has the service title
         assert "Morning Worship" in overlay_msgs[1]["command"]["data"]

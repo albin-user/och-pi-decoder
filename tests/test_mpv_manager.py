@@ -268,17 +268,6 @@ class TestOverlayCommands:
             res_x=3840, res_y=2160,
         )
 
-    async def test_set_overlay_ass_script(self):
-        mgr = _make_manager()
-        mgr._send = AsyncMock()
-        script = "[Script Info]\nPlayResX: 1920\n"
-        await mgr.set_overlay(42, script, ass_script=True)
-        mgr._send.assert_awaited_once_with(
-            ["osd-overlay"],
-            id=42, format="ass", data=script,
-            res_x=1920, res_y=1080,
-        )
-
     async def test_overlay_resolution_fallback(self):
         cfg = _make_config(**{"display.hdmi_resolution": "invalid"})
         mgr = _make_manager(cfg)
