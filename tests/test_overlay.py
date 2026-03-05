@@ -248,7 +248,7 @@ class TestFormatOverlay:
         assert "Sermon" in fg
         assert "Pastor John" in fg
 
-    def test_pre_service_shows_label_and_item_title(self, default_config):
+    def test_pre_service_shows_label_plan_and_item(self, default_config):
         status = LiveStatus(
             is_live=True,
             plan_title="Sunday Service",
@@ -257,10 +257,11 @@ class TestFormatOverlay:
         )
         _bg, fg = format_overlay(status, default_config)
         assert "Pre-service" in fg
+        assert "Sunday Service" in fg
         assert "Sound Check" in fg
         assert "--:--" not in fg
 
-    def test_post_service_shows_label_and_item_title(self, default_config):
+    def test_post_service_shows_label_plan_and_item(self, default_config):
         status = LiveStatus(
             is_live=True,
             plan_title="Sunday Service",
@@ -269,6 +270,7 @@ class TestFormatOverlay:
         )
         _bg, fg = format_overlay(status, default_config)
         assert "Post-service" in fg
+        assert "Sunday Service" in fg
         assert "Cleanup" in fg
         assert "--:--" not in fg
 

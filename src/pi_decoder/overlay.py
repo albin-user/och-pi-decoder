@@ -273,17 +273,22 @@ def format_overlay(
 
     if status.service_position in ("pre", "post"):
         pos_label = "Pre-service" if status.service_position == "pre" else "Post-service"
-        item_label = _truncate(status.item_title or pos_label, max_title)
+        fs_prepost = int(fs * 0.8)
+        plan_label = _truncate(status.plan_title or "Service", max_title)
+        item_label = _truncate(status.item_title or pos_label, max_info)
 
         fg_parts = [
-            f"{{{pos_tag}\\fs{fs}\\b1"
+            f"{{{pos_tag}\\fs{fs_prepost}\\b1"
             f"\\1c&HFFFFFF&\\3c&H000000&"
-            f"\\bord{_text_bord(fs)}\\shad0}}{pos_label}",
+            f"\\bord{_text_bord(fs_prepost)}\\shad0}}{pos_label}",
         ]
-        line_sizes = [fs, fs_title]
+        line_sizes = [fs_prepost, fs_title, fs_info]
 
         fg_parts.append(
-            f"\\N{{\\fs{fs_title}\\b0\\1c&HFFFFFF&\\bord{_text_bord(fs_title)}}}{item_label}"
+            f"\\N{{\\fs{fs_title}\\b0\\1c&HFFFFFF&\\bord{_text_bord(fs_title)}}}{plan_label}"
+        )
+        fg_parts.append(
+            f"\\N{{\\fs{fs_info}\\1c&HFFFFFF&\\bord{_text_bord(fs_info)}}}{item_label}"
         )
 
         layout = _overlay_layout(res_x, res_y, fs_title, len(line_sizes), line_sizes)
