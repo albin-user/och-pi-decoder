@@ -515,10 +515,10 @@ class TestOverlayUpdaterIntegration:
                         fut.set_result(None)
 
         resolver = asyncio.create_task(auto_resolve())
-        # Run for >1s to get a second tick (poll completes in background
-        # before the next overlay push)
+        # First tick may be delayed up to ~1s (wall-clock alignment),
+        # then we need a second tick 1s later for the poll result to show.
         async def stop_after_two_ticks():
-            await asyncio.sleep(1.1)
+            await asyncio.sleep(2.2)
             updater._running = False
 
         await asyncio.gather(updater.run(), stop_after_two_ticks())

@@ -592,7 +592,9 @@ class MpvManager:
                     if status.get("idle"):
                         # Build enhanced idle overlay
                         try:
-                            net = _get_network_info()
+                            net = await asyncio.get_event_loop().run_in_executor(
+                                None, _get_network_info,
+                            )
                             ass = self._build_idle_overlay(net)
                             await self.set_overlay(IP_OVERLAY_ID, ass)
 
@@ -644,7 +646,9 @@ class MpvManager:
                         self._stream_failures = 0
                         # Track connection type for change detection
                         try:
-                            net = _get_network_info()
+                            net = await asyncio.get_event_loop().run_in_executor(
+                                None, _get_network_info,
+                            )
                             self._last_connection_type = net.get("connection_type", "")
                         except Exception:
                             pass

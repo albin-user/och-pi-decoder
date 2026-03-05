@@ -353,8 +353,12 @@ class OverlayUpdater:
         self._running = True
         poll_interval = self._config.pco.poll_interval
         import time as _time
-        next_tick = _time.monotonic()            # first tick runs immediately
-        last_poll = next_tick - poll_interval     # trigger immediate first poll
+        # Align first tick to the next wall-clock second boundary so the
+        # displayed countdown flips in sync with real seconds.
+        frac = _time.time() % 1.0
+        align_delay = (1.0 - frac) % 1.0
+        next_tick = _time.monotonic() + align_delay
+        last_poll = _time.monotonic() - poll_interval  # trigger immediate first poll
 
         try:
             while self._running:
