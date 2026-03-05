@@ -164,8 +164,12 @@ def _build_overlay_info(config: Config, overlay: OverlayUpdater | None, pco: PCO
         info["plan_title"] = st.plan_title
         info["item_title"] = st.item_title
         info["countdown"] = ""
-        if st.service_end_time:
-            remaining = (st.service_end_time - datetime.now(timezone.utc)).total_seconds()
+        now = datetime.now(timezone.utc)
+        if config.overlay.timer_mode == "item" and st.item_end_time:
+            remaining = (st.item_end_time - now).total_seconds()
+            info["countdown"] = format_countdown(remaining)
+        elif st.service_end_time:
+            remaining = (st.service_end_time - now).total_seconds()
             info["countdown"] = format_countdown(remaining)
         info["message"] = st.message
     if pco and pco.credential_error:
