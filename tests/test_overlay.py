@@ -248,6 +248,30 @@ class TestFormatOverlay:
         assert "Sermon" in fg
         assert "Pastor John" in fg
 
+    def test_pre_service_shows_label_and_item_title(self, default_config):
+        status = LiveStatus(
+            is_live=True,
+            plan_title="Sunday Service",
+            item_title="Sound Check",
+            service_position="pre",
+        )
+        _bg, fg = format_overlay(status, default_config)
+        assert "Pre-service" in fg
+        assert "Sound Check" in fg
+        assert "--:--" not in fg
+
+    def test_post_service_shows_label_and_item_title(self, default_config):
+        status = LiveStatus(
+            is_live=True,
+            plan_title="Sunday Service",
+            item_title="Cleanup",
+            service_position="post",
+        )
+        _bg, fg = format_overlay(status, default_config)
+        assert "Post-service" in fg
+        assert "Cleanup" in fg
+        assert "--:--" not in fg
+
     def test_bg_layer_uses_drawing_mode(self, default_config):
         status = LiveStatus(is_live=False, message="Test")
         bg, _fg = format_overlay(status, default_config)

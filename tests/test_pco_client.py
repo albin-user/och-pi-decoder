@@ -555,6 +555,7 @@ class TestParseLiveResponse:
         assert status.next_item_title == "Worship"
         assert status.plan_index == 0
         assert status.plan_length == 2
+        assert status.service_position == "pre"
 
     def test_post_service_item_gives_zero_remaining(self, client):
         """Current item is post-service → remaining = 0, item_end_time = None."""
@@ -611,6 +612,7 @@ class TestParseLiveResponse:
         assert status.next_item_title == ""
         assert status.plan_index == 1  # len(during items)
         assert status.plan_length == 1
+        assert status.service_position == "post"
 
 
 class TestExtractServiceTimes:

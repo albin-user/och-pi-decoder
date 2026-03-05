@@ -62,6 +62,7 @@ class LiveStatus:
     plan_index: int = 0
     plan_length: int = 0
     planned_service_end: datetime | None = None  # original planned end (PlanTime starts_at + during items)
+    service_position: str = "during"  # "pre", "during", or "post"
 
 
 class PCOClient:
@@ -688,6 +689,7 @@ class PCOClient:
                 plan_index=0,
                 plan_length=len(items),
                 planned_service_end=planned_service_end,
+                service_position="pre",
             )
 
         # ── Post-service item: service is over ────────────────────
@@ -704,6 +706,7 @@ class PCOClient:
                 plan_index=len(items),
                 plan_length=len(items),
                 planned_service_end=planned_service_end,
+                service_position="post",
             )
 
         # ── During-service item ───────────────────────────────────

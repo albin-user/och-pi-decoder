@@ -269,6 +269,28 @@ def format_overlay(
         fg = _build_fg_events("".join(fg_parts), cfg.position, layout, res_x, res_y)
         return (bg, fg)
 
+    # ── Live, pre/post service item ─────────────────────────────────
+
+    if status.service_position in ("pre", "post"):
+        pos_label = "Pre-service" if status.service_position == "pre" else "Post-service"
+        item_label = _truncate(status.item_title or pos_label, max_title)
+
+        fg_parts = [
+            f"{{{pos_tag}\\fs{fs}\\b1"
+            f"\\1c&HFFFFFF&\\3c&H000000&"
+            f"\\bord{_text_bord(fs)}\\shad0}}{pos_label}",
+        ]
+        line_sizes = [fs, fs_title]
+
+        fg_parts.append(
+            f"\\N{{\\fs{fs_title}\\b0\\1c&HFFFFFF&\\bord{_text_bord(fs_title)}}}{item_label}"
+        )
+
+        layout = _overlay_layout(res_x, res_y, fs_title, len(line_sizes), line_sizes)
+        bg = _build_bg_events(cfg.position, bg_alpha, layout, res_x, res_y)
+        fg = _build_fg_events("".join(fg_parts), cfg.position, layout, res_x, res_y)
+        return (bg, fg)
+
     # ── Live, not finished ───────────────────────────────────────────
 
     if cfg.timer_mode == "item" and status.item_end_time:
