@@ -222,7 +222,9 @@
             <select id="streamHwdec">
               <option value="auto" {% if config.stream.hwdec == 'auto' %}selected{% endif %}>Auto</option>
               <option value="auto-safe" {% if config.stream.hwdec == 'auto-safe' %}selected{% endif %}>Auto safe</option>
+              <option value="auto-copy" {% if config.stream.hwdec == 'auto-copy' %}selected{% endif %}>Auto copy-back</option>
               <option value="v4l2m2m" {% if config.stream.hwdec == 'v4l2m2m' %}selected{% endif %}>V4L2 Pi hardware</option>
+              <option value="v4l2m2m-copy" {% if config.stream.hwdec == 'v4l2m2m-copy' %}selected{% endif %}>V4L2 Pi copy-back</option>
               <option value="no" {% if config.stream.hwdec == 'no' %}selected{% endif %}>Software (no hwdec)</option>
             </select>
             <div class="help">Currently using: <span id="hwdecCurrent">--</span></div>

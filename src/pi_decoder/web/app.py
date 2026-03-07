@@ -249,7 +249,7 @@ def create_app(
         hostname = await set_hostname(config.general.name)
         return {"ok": True, "hostname": hostname}
 
-    ALLOWED_HWDEC = {"auto", "auto-safe", "v4l2m2m", "no"}
+    ALLOWED_HWDEC = {"auto", "auto-safe", "auto-copy", "v4l2m2m", "v4l2m2m-copy", "no"}
     ALLOWED_MAX_RESOLUTION = {"best", "2160", "1440", "1080", "720", "480"}
 
     @app.post("/api/config/stream")
