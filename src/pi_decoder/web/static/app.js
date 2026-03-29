@@ -17,6 +17,8 @@
   var _statusReconnectTimer = null;
   var _previewReconnectTimer = null;
   var _lastPreviewUrl = null;
+  var _statusBackoff = 3000;
+  var _previewBackoff = 3000;
   var _filterTimer = null;
   var _hotspotActive = false;
 
@@ -180,6 +182,7 @@
     if (statusWs && statusWs.readyState <= 1) return;
     var proto = location.protocol === "https:" ? "wss:" : "ws:";
     statusWs = new WebSocket(proto + "//" + location.host + "/ws/status");
+    statusWs.onopen = function () { _statusBackoff = 3000; };
     statusWs.onmessage = function (ev) {
       try {
         var d = JSON.parse(ev.data);
@@ -187,6 +190,9 @@
       } catch (err) {
         console.error("Status parse error:", err);
       }
+    };
+    statusWs.onerror = function (err) {
+      console.error("Status WebSocket error:", err);
     };
     statusWs.onclose = function () {
       if (!pageClosing) {
@@ -196,10 +202,12 @@
           badge.className = "status-badge offline";
         }
         if (_statusReconnectTimer) clearTimeout(_statusReconnectTimer);
+        var delay = _statusBackoff + Math.random() * 1000;
         _statusReconnectTimer = setTimeout(function () {
           _statusReconnectTimer = null;
           connectStatus();
-        }, 3000);
+        }, delay);
+        _statusBackoff = Math.min(_statusBackoff * 2, 60000);
       }
     };
   }
@@ -457,6 +465,7 @@
     var proto = location.protocol === "https:" ? "wss:" : "ws:";
     previewWs = new WebSocket(proto + "//" + location.host + "/ws/preview");
     previewWs.binaryType = "blob";
+    previewWs.onopen = function () { _previewBackoff = 3000; };
     previewWs.onmessage = function (ev) {
       var img = document.getElementById("previewImg");
       if (img) {
@@ -468,14 +477,20 @@
         if (ph) ph.style.display = "none";
       }
     };
+    previewWs.onerror = function (err) {
+      console.error("Preview WebSocket error:", err);
+    };
     previewWs.onclose = function () {
+      if (_lastPreviewUrl) { URL.revokeObjectURL(_lastPreviewUrl); _lastPreviewUrl = null; }
       // only reconnect if still on Stream tab
       if (!pageClosing && activeTab === 1) {
         if (_previewReconnectTimer) clearTimeout(_previewReconnectTimer);
+        var delay = _previewBackoff + Math.random() * 1000;
         _previewReconnectTimer = setTimeout(function () {
           _previewReconnectTimer = null;
           connectPreview();
-        }, 3000);
+        }, delay);
+        _previewBackoff = Math.min(_previewBackoff * 2, 60000);
       }
     };
   }
@@ -484,6 +499,10 @@
     if (previewWs) {
       previewWs.close();
       previewWs = null;
+    }
+    if (_lastPreviewUrl) {
+      URL.revokeObjectURL(_lastPreviewUrl);
+      _lastPreviewUrl = null;
     }
   }
 
@@ -534,16 +553,16 @@
     setTimeout(function () { card.classList.remove("pressed"); }, 300);
   }
 
-  window.cecPowerOn = function (ev) { pressAnim(ev); apiPost("/api/cec/on").then(function () { toast("TV powering on..."); }); };
+  window.cecPowerOn = function (ev) { pressAnim(ev); apiPost("/api/cec/on").then(function () { toast("TV powering on..."); }).catch(function () {}); };
   window.cecStandby = function () {
     showConfirm("Turn off the TV?", "Turn Off").then(function (ok) {
-      if (ok) apiPost("/api/cec/standby").then(function () { toast("TV turning off..."); });
+      if (ok) apiPost("/api/cec/standby").then(function () { toast("TV turning off..."); }).catch(function () {});
     });
   };
-  window.cecActiveSource = function (ev) { pressAnim(ev); apiPost("/api/cec/active-source").then(function () { toast("Switched to livestream source"); }); };
-  window.cecVolumeUp = function (ev) { pressAnim(ev); apiPost("/api/cec/volume-up"); };
-  window.cecVolumeDown = function (ev) { pressAnim(ev); apiPost("/api/cec/volume-down"); };
-  window.cecMute = function (ev) { pressAnim(ev); apiPost("/api/cec/mute").then(function () { toast("Mute toggled"); }); };
+  window.cecActiveSource = function (ev) { pressAnim(ev); apiPost("/api/cec/active-source").then(function () { toast("Switched to livestream source"); }).catch(function () {}); };
+  window.cecVolumeUp = function (ev) { pressAnim(ev); apiPost("/api/cec/volume-up").catch(function () {}); };
+  window.cecVolumeDown = function (ev) { pressAnim(ev); apiPost("/api/cec/volume-down").catch(function () {}); };
+  window.cecMute = function (ev) { pressAnim(ev); apiPost("/api/cec/mute").then(function () { toast("Mute toggled"); }).catch(function () {}); };
 
   // ── stream config ─────────────────────────────────────────────────
 
@@ -576,7 +595,7 @@
     apiPost("/api/stream/switch-back").then(function (d) {
       if (d.ok) toast("Switching back to primary stream...");
       else toast(d.error || "Switch back failed", "error");
-    });
+    }).catch(function () {});
   };
 
   // ── stream presets ──────────────────────────────────────────────────
@@ -587,7 +606,7 @@
     apiGet("/api/stream/presets").then(function (d) {
       _presets = d.presets || [];
       renderPresets();
-    });
+    }).catch(function () {});
   }
 
   function renderPresets() {
@@ -638,7 +657,7 @@
         document.getElementById("presetUrl").value = "";
         renderPresets();
       } else toast(d.error || "Failed to save", "error");
-    });
+    }).catch(function () {});
   };
 
   window.saveCurrentAsPreset = function () {
@@ -653,7 +672,7 @@
     apiPost("/api/stream/presets", { presets: _presets }).then(function (d) {
       if (d.ok) { toast("Preset removed"); renderPresets(); }
       else toast(d.error || "Failed to save", "error");
-    });
+    }).catch(function () {});
   };
 
   // ── overlay config ────────────────────────────────────────────────
@@ -818,7 +837,7 @@
 
   function confirmAction(msg, url, successMsg, confirmLabel) {
     showConfirm(msg, confirmLabel).then(function (ok) {
-      if (ok) apiPost(url).then(function () { toast(successMsg); });
+      if (ok) apiPost(url).then(function () { toast(successMsg); }).catch(function () {});
     });
   }
 
@@ -857,7 +876,7 @@
           }, 3000);
         }
       }, 1000);
-    });
+    }).catch(function () { toast("Reboot failed", "error"); });
   }
 
   window.rebootSystem = function () {
@@ -878,7 +897,7 @@
           badge.textContent = "Shut Down";
           badge.className = "status-badge offline";
         }
-      });
+      }).catch(function () { toast("Shutdown failed", "error"); });
     });
   };
   window.stopVideo = function () {
@@ -920,7 +939,7 @@
         // auto-scroll to bottom
         if (viewer) viewer.scrollTop = viewer.scrollHeight;
       }
-    );
+    ).catch(function () { if (viewer) viewer.textContent = "Failed to load logs"; });
   }
 
   function renderLogs() {
@@ -962,7 +981,7 @@
   function loadVersion() {
     apiGet("/api/version").then(function (d) {
       setText("currentVersion", d.version || "unknown");
-    });
+    }).catch(function () {});
   }
 
   // ── HDMI display modes ─────────────────────────────────────────────

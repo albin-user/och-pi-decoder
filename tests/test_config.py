@@ -255,7 +255,7 @@ timer_mode = "invalid"
 poll_interval = 1
 """)
         cfg = load_config(tmp_config)
-        assert cfg.pco.poll_interval == 2  # minimum
+        assert cfg.pco.poll_interval == 1  # minimum
 
     def test_web_port_clamped(self, tmp_config: Path):
         """Web port should be clamped to valid range."""
@@ -596,7 +596,7 @@ class TestConfigRoundTripValidation:
         assert loaded.stream.network_caching == 200
         assert loaded.overlay.font_size == 200
         assert loaded.overlay.transparency == 1.0
-        assert loaded.pco.poll_interval == 2
+        assert loaded.pco.poll_interval == 1
         assert loaded.web.port == 65535
         assert loaded.network.ethernet_timeout == 1
         assert loaded.network.wifi_timeout == 120

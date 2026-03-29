@@ -1047,6 +1047,86 @@ class TestStreamSwitch:
         assert "restart failed" in resp.json()["error"]
 
 
+class TestBadInputReturns400:
+    """Endpoints with int()/float() casts should return 400 on non-numeric strings."""
+
+    # -- POST /api/config/stream --
+
+    def test_stream_bad_network_caching(self, client):
+        resp = client.post("/api/config/stream", json={
+            "url": "rtmp://test.local/live",
+            "network_caching": "not_a_number",
+        })
+        assert resp.status_code == 400
+        data = resp.json()
+        assert data["ok"] is False
+        assert "Invalid value" in data["error"]
+
+    # -- POST /api/config/overlay --
+
+    def test_overlay_bad_font_size(self, client):
+        resp = client.post("/api/config/overlay", json={"font_size": "big"})
+        assert resp.status_code == 400
+        data = resp.json()
+        assert data["ok"] is False
+        assert "Invalid value" in data["error"]
+
+    def test_overlay_bad_font_size_title(self, client):
+        resp = client.post("/api/config/overlay", json={"font_size_title": "large"})
+        assert resp.status_code == 400
+        data = resp.json()
+        assert data["ok"] is False
+        assert "Invalid value" in data["error"]
+
+    def test_overlay_bad_font_size_info(self, client):
+        resp = client.post("/api/config/overlay", json={"font_size_info": "small"})
+        assert resp.status_code == 400
+        data = resp.json()
+        assert data["ok"] is False
+        assert "Invalid value" in data["error"]
+
+    def test_overlay_bad_transparency(self, client):
+        resp = client.post("/api/config/overlay", json={"transparency": "opaque"})
+        assert resp.status_code == 400
+        data = resp.json()
+        assert data["ok"] is False
+        assert "Invalid value" in data["error"]
+
+    # -- POST /api/config/pco --
+
+    def test_pco_bad_poll_interval(self, client):
+        resp = client.post("/api/config/pco", json={
+            "app_id": "id",
+            "secret": "secret",
+            "service_type_id": "123",
+            "poll_interval": "fast",
+        })
+        assert resp.status_code == 400
+        data = resp.json()
+        assert data["ok"] is False
+        assert "Invalid value" in data["error"]
+
+    # -- POST /api/config/network --
+
+    def test_network_bad_ethernet_timeout(self, client):
+        resp = client.post("/api/config/network", json={
+            "ethernet_timeout": "forever",
+        })
+        assert resp.status_code == 400
+        data = resp.json()
+        assert data["ok"] is False
+        assert "Invalid value" in data["error"]
+
+    def test_network_bad_wifi_timeout(self, client):
+        resp = client.post("/api/config/network", json={
+            "wifi_timeout": "never",
+        })
+        assert resp.status_code == 400
+        data = resp.json()
+        assert data["ok"] is False
+        assert "Invalid value" in data["error"]
+
+
 class TestStreamSwitchBack:
     def test_switch_back_success(self, client, mock_mpv):
         resp = client.post("/api/stream/switch-back")

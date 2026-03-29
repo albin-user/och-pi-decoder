@@ -45,6 +45,7 @@ add_tmpfs() {
 add_tmpfs /var/log 30M
 add_tmpfs /var/tmp 10M
 add_tmpfs /var/lib/systemd 5M
+add_tmpfs /tmp 50M
 
 # ── 4. dpkg hooks for unattended-upgrades ────────────────────────────
 APT_HOOK="/etc/apt/apt.conf.d/01-remount-rw"

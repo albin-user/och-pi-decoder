@@ -1,6 +1,7 @@
 """Tests for CEC TV control module."""
 
 import asyncio
+import time
 from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest
@@ -105,6 +106,74 @@ class TestPowerCommands:
             result2 = await cec.get_power_status()
         assert result1 == result2 == "on"
         mock.assert_called_once()  # Only one subprocess spawned
+
+    @pytest.mark.asyncio
+    async def test_get_power_status_cache_expires(self):
+        """After TTL expires, a fresh cec-client query is made."""
+        mock = AsyncMock(side_effect=[
+            "power status: on\n",
+            "power status: standby\n",
+        ])
+        with patch("pi_decoder.cec._run_cec", mock):
+            result1 = await cec.get_power_status()
+            assert result1 == "on"
+            # Force cache expiry
+            cec._power_cache_time = time.monotonic() - cec._POWER_CACHE_TTL - 1
+            result2 = await cec.get_power_status()
+            assert result2 == "standby"
+        assert mock.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_get_power_status_error_returns_unknown(self):
+        """If cec-client fails, return 'unknown' instead of crashing."""
+        mock = AsyncMock(side_effect=Exception("cec-client crashed"))
+        with patch("pi_decoder.cec._run_cec", mock):
+            result = await cec.get_power_status()
+        assert result == "unknown"
+
+    @pytest.mark.asyncio
+    async def test_power_on_invalidates_cache(self):
+        """power_on() should invalidate cache so next status query is fresh."""
+        mock_run = AsyncMock(return_value="power status: standby\n")
+        with patch("pi_decoder.cec._run_cec", mock_run):
+            # Prime the cache
+            await cec.get_power_status()
+            assert cec._power_cache == "standby"
+            # power_on should invalidate
+            mock_run.return_value = "power on sent"
+            await cec.power_on()
+            assert cec._power_cache_time == 0.0
+
+    @pytest.mark.asyncio
+    async def test_standby_invalidates_cache(self):
+        """standby() should invalidate cache so next status query is fresh."""
+        mock_run = AsyncMock(return_value="power status: on\n")
+        with patch("pi_decoder.cec._run_cec", mock_run):
+            await cec.get_power_status()
+            assert cec._power_cache == "on"
+            mock_run.return_value = "standby sent"
+            await cec.standby()
+            assert cec._power_cache_time == 0.0
+
+
+class TestIsAvailable:
+
+    def setup_method(self):
+        cec._cec_available = None
+
+    def test_available_when_binary_exists(self):
+        with patch("pi_decoder.cec.shutil.which", return_value="/usr/bin/cec-client"):
+            assert cec.is_available() is True
+
+    def test_not_available_when_binary_missing(self):
+        with patch("pi_decoder.cec.shutil.which", return_value=None):
+            assert cec.is_available() is False
+
+    def test_result_is_cached(self):
+        with patch("pi_decoder.cec.shutil.which", return_value="/usr/bin/cec-client") as mock:
+            cec.is_available()
+            cec.is_available()
+        mock.assert_called_once()
 
 
 class TestSourceCommands:

@@ -65,7 +65,7 @@ chown -R "$SERVICE_USER:$SERVICE_USER" "$CONFIG_DIR"
 # ── 5. systemd service ──────────────────────────────────────────────
 echo -e "\n${GREEN}[4/8] Installing systemd service...${NC}"
 
-sed "s/^User=.*/User=$SERVICE_USER/;s/^Group=.*/Group=$SERVICE_USER/" \
+sed "s|^User=.*|User=$SERVICE_USER|;s|^Group=.*|Group=$SERVICE_USER|" \
     "$SCRIPT_DIR/pi-decoder.service" > /etc/systemd/system/pi-decoder.service
 cp "$SCRIPT_DIR/pi-decoder-network.service" /etc/systemd/system/
 chmod +x "$SCRIPT_DIR/pi-decoder-network.sh"
@@ -95,7 +95,9 @@ systemctl daemon-reload
 rm -f "/home/$SERVICE_USER/.config/autostart/vlc-kiosk.desktop"
 
 # Sudoers for service user (service restart and reboot without password)
-install -m 440 "$SCRIPT_DIR/sudoers-pi-decoder" /etc/sudoers.d/decoder
+sed "s|^pi |$SERVICE_USER |g" "$SCRIPT_DIR/sudoers-pi-decoder" > /tmp/sudoers-pi-decoder.tmp
+install -m 440 /tmp/sudoers-pi-decoder.tmp /etc/sudoers.d/decoder
+rm -f /tmp/sudoers-pi-decoder.tmp
 
 # Allow service user to read journal logs and access DRM devices
 usermod -aG systemd-journal,video,render "$SERVICE_USER" 2>/dev/null || true
@@ -128,7 +130,7 @@ set_boot_config "disable_overscan" "1"
 set_boot_config "hdmi_drive" "2"
 
 # KMS/DRM resolution forcing (Pi 4/5 on Bookworm ignore legacy hdmi_* settings)
-# Append video= kernel parameter to cmdline.txt for 1080p60 on the KMS driver
+# Append video= kernel parameter to cmdline.txt for 1080p30 on the KMS driver
 CMDLINE="/boot/firmware/cmdline.txt"
 [ -f "$CMDLINE" ] || CMDLINE="/boot/cmdline.txt"
 if [ -f "$CMDLINE" ]; then

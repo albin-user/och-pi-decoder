@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pi_decoder.config import Config
-from pi_decoder.mpv_manager import MpvManager, IPC_SOCKET, SCREENSHOT_PATH, IP_OVERLAY_ID
+from pi_decoder.mpv_manager import MpvManager, IPC_SOCKET, SCREENSHOT_PATH, IP_OVERLAY_ID, _FAILOVER_THRESHOLD
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -1567,6 +1567,32 @@ class TestFailoverBackupUrl:
         assert mgr.using_backup is False
         mgr._using_backup = True
         assert mgr.using_backup is True
+
+
+# ── Failover/backup unit tests ──────────────────────────────────────────
+
+
+class TestFailoverBackup:
+    def test_reset_stream_retry_clears_state(self):
+        """reset_stream_retry() resets all failover-related fields."""
+        mgr = _make_manager()
+        # Dirty every field that reset_stream_retry should clear
+        mgr._stream_failures = 10
+        mgr._using_backup = True
+        mgr._stream_retry_backoff = 45.0
+        mgr.reset_stream_retry()
+        assert mgr._stream_failures == 0
+        assert mgr._using_backup is False
+        assert mgr._stream_retry_backoff == 5.0
+
+    def test_failover_threshold_constant(self):
+        """_FAILOVER_THRESHOLD should be 3."""
+        assert _FAILOVER_THRESHOLD == 3
+
+    def test_backup_flag_initially_false(self):
+        """A freshly-constructed MpvManager should not be using the backup URL."""
+        mgr = _make_manager()
+        assert mgr._using_backup is False
 
 
 # ── Performance flags ─────────────────────────────────────────────────────

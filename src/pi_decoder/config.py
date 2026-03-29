@@ -223,7 +223,7 @@ def validate_config(cfg: Config) -> None:
         try:
             from zoneinfo import ZoneInfo
             ZoneInfo(_tz)
-        except (KeyError, Exception):
+        except (KeyError, ImportError):
             log.warning("Invalid timezone '%s', falling back to UTC", _tz)
             cfg.overlay.timezone = "UTC"
     cfg.pco.poll_interval = max(1, min(cfg.pco.poll_interval, 60))

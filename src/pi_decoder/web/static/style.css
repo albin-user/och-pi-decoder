@@ -719,7 +719,7 @@ input[type="range"] {
     max-height: 400px;
     overflow-y: auto;
     white-space: pre-wrap;
-    word-break: break-all;
+    overflow-wrap: break-word;
 }
 
 .log-error   { color: #f87171; font-weight: 600; }

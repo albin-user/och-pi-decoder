@@ -262,17 +262,20 @@ def create_app(
             max_res = str(data["max_resolution"]).strip()
             if max_res not in ALLOWED_MAX_RESOLUTION:
                 return JSONResponse({"ok": False, "error": f"Invalid max_resolution value: {max_res}"}, 400)
-        async with _config_lock:
-            config.stream.url = data.get("url", config.stream.url)
-            if "backup_url" in data:
-                config.stream.backup_url = str(data["backup_url"]).strip()
-            config.stream.network_caching = int(data.get("network_caching", config.stream.network_caching))
-            if "hwdec" in data:
-                config.stream.hwdec = str(data["hwdec"]).strip()
-            if "max_resolution" in data:
-                config.stream.max_resolution = str(data["max_resolution"]).strip()
-            validate_config(config)
-            save_config(config, config_path)
+        try:
+            async with _config_lock:
+                config.stream.url = data.get("url", config.stream.url)
+                if "backup_url" in data:
+                    config.stream.backup_url = str(data["backup_url"]).strip()
+                config.stream.network_caching = int(data.get("network_caching", config.stream.network_caching))
+                if "hwdec" in data:
+                    config.stream.hwdec = str(data["hwdec"]).strip()
+                if "max_resolution" in data:
+                    config.stream.max_resolution = str(data["max_resolution"]).strip()
+                validate_config(config)
+                save_config(config, config_path)
+        except (ValueError, TypeError) as e:
+            return JSONResponse({"ok": False, "error": f"Invalid value: {e}"}, 400)
         log.info("Config updated: stream URL changed to %s", config.stream.url[:50])
         # Reset retry backoff when URL changes so it tries immediately
         mpv.reset_stream_retry()
@@ -322,19 +325,22 @@ def create_app(
     @app.post("/api/config/overlay")
     async def api_config_overlay(request: Request):
         data = await request.json()
-        async with _config_lock:
-            config.overlay.enabled = data.get("enabled", config.overlay.enabled)
-            config.overlay.position = data.get("position", config.overlay.position)
-            config.overlay.font_size = int(data.get("font_size", config.overlay.font_size))
-            config.overlay.font_size_title = int(data.get("font_size_title", config.overlay.font_size_title))
-            config.overlay.font_size_info = int(data.get("font_size_info", config.overlay.font_size_info))
-            config.overlay.transparency = float(data.get("transparency", config.overlay.transparency))
-            config.overlay.timer_mode = data.get("timer_mode", config.overlay.timer_mode)
-            config.overlay.show_description = data.get("show_description", config.overlay.show_description)
-            config.overlay.show_service_end = data.get("show_service_end", config.overlay.show_service_end)
-            config.overlay.timezone = data.get("timezone", config.overlay.timezone)
-            validate_config(config)
-            save_config(config, config_path)
+        try:
+            async with _config_lock:
+                config.overlay.enabled = data.get("enabled", config.overlay.enabled)
+                config.overlay.position = data.get("position", config.overlay.position)
+                config.overlay.font_size = int(data.get("font_size", config.overlay.font_size))
+                config.overlay.font_size_title = int(data.get("font_size_title", config.overlay.font_size_title))
+                config.overlay.font_size_info = int(data.get("font_size_info", config.overlay.font_size_info))
+                config.overlay.transparency = float(data.get("transparency", config.overlay.transparency))
+                config.overlay.timer_mode = data.get("timer_mode", config.overlay.timer_mode)
+                config.overlay.show_description = data.get("show_description", config.overlay.show_description)
+                config.overlay.show_service_end = data.get("show_service_end", config.overlay.show_service_end)
+                config.overlay.timezone = data.get("timezone", config.overlay.timezone)
+                validate_config(config)
+                save_config(config, config_path)
+        except (ValueError, TypeError) as e:
+            return JSONResponse({"ok": False, "error": f"Invalid value: {e}"}, 400)
         log.info("Config updated: overlay settings changed")
         if config.overlay.enabled:
             _ensure_overlay_created()
@@ -347,23 +353,26 @@ def create_app(
     @app.post("/api/config/pco")
     async def api_config_pco(request: Request):
         data = await request.json()
-        async with _config_lock:
-            if data.get("app_id"):
-                config.pco.app_id = data["app_id"]
-            if data.get("secret"):
-                config.pco.secret = data["secret"]
-            if data.get("service_type_id"):
-                config.pco.service_type_id = data["service_type_id"]
-            if "folder_id" in data:
-                config.pco.folder_id = str(data["folder_id"])
-            if "search_mode" in data:
-                mode = str(data["search_mode"])
-                if mode in ("service_type", "folder"):
-                    config.pco.search_mode = mode
-            if "poll_interval" in data:
-                config.pco.poll_interval = max(1, min(60, int(data["poll_interval"])))
-            validate_config(config)
-            save_config(config, config_path)
+        try:
+            async with _config_lock:
+                if data.get("app_id"):
+                    config.pco.app_id = data["app_id"]
+                if data.get("secret"):
+                    config.pco.secret = data["secret"]
+                if data.get("service_type_id"):
+                    config.pco.service_type_id = data["service_type_id"]
+                if "folder_id" in data:
+                    config.pco.folder_id = str(data["folder_id"])
+                if "search_mode" in data:
+                    mode = str(data["search_mode"])
+                    if mode in ("service_type", "folder"):
+                        config.pco.search_mode = mode
+                if "poll_interval" in data:
+                    config.pco.poll_interval = max(1, min(60, int(data["poll_interval"])))
+                validate_config(config)
+                save_config(config, config_path)
+        except (ValueError, TypeError) as e:
+            return JSONResponse({"ok": False, "error": f"Invalid value: {e}"}, 400)
         # Lazily create PCO client + overlay if conditions met
         _ensure_overlay_created()
         if pco:
@@ -578,6 +587,8 @@ def create_app(
         filename = file.filename or ""
         if not filename.endswith(".toml"):
             return JSONResponse({"ok": False, "error": "Only .toml files accepted"}, 400)
+        if file.size is not None and file.size > 64 * 1024:
+            return JSONResponse({"ok": False, "error": "File too large (max 64KB)"}, 400)
         content = await file.read()
         if len(content) > 64 * 1024:
             return JSONResponse({"ok": False, "error": "File too large (max 64KB)"}, 400)
@@ -728,23 +739,26 @@ def create_app(
     @app.post("/api/config/network")
     async def api_config_network(request: Request):
         data = await request.json()
-        async with _config_lock:
-            if "hotspot_ssid" in data:
-                config.network.hotspot_ssid = str(data["hotspot_ssid"])
-            if "hotspot_password" in data:
-                config.network.hotspot_password = str(data["hotspot_password"])
-            if "ethernet_timeout" in data:
-                config.network.ethernet_timeout = int(data["ethernet_timeout"])
-            if "wifi_timeout" in data:
-                config.network.wifi_timeout = int(data["wifi_timeout"])
-            # Static IP fields (eth_ and wifi_ prefixes)
-            for prefix in ("eth", "wifi"):
-                for suffix in ("ip_mode", "ip_address", "gateway", "dns"):
-                    key = f"{prefix}_{suffix}"
-                    if key in data:
-                        setattr(config.network, key, str(data[key]))
-            validate_config(config)
-            save_config(config, config_path)
+        try:
+            async with _config_lock:
+                if "hotspot_ssid" in data:
+                    config.network.hotspot_ssid = str(data["hotspot_ssid"])
+                if "hotspot_password" in data:
+                    config.network.hotspot_password = str(data["hotspot_password"])
+                if "ethernet_timeout" in data:
+                    config.network.ethernet_timeout = int(data["ethernet_timeout"])
+                if "wifi_timeout" in data:
+                    config.network.wifi_timeout = int(data["wifi_timeout"])
+                # Static IP fields (eth_ and wifi_ prefixes)
+                for prefix in ("eth", "wifi"):
+                    for suffix in ("ip_mode", "ip_address", "gateway", "dns"):
+                        key = f"{prefix}_{suffix}"
+                        if key in data:
+                            setattr(config.network, key, str(data[key]))
+                validate_config(config)
+                save_config(config, config_path)
+        except (ValueError, TypeError) as e:
+            return JSONResponse({"ok": False, "error": f"Invalid value: {e}"}, 400)
         log.info("Config updated: network settings changed")
         return {"ok": True}
 

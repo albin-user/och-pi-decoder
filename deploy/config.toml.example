@@ -12,7 +12,7 @@ presets = []                 # quick-switch bookmarks: [{label = "Main", url = "
 [overlay]
 enabled = false              # toggle per-Pi
 position = "bottom-right"    # top-left, top-right, bottom-left, bottom-right
-font_size = 56               # countdown timer text size (pt)
+font_size = 96               # countdown timer text size (pt)
 font_size_title = 38         # service/item title text size (pt)
 font_size_info = 32          # description and schedule text size (pt)
 transparency = 0.7           # 0.0 = invisible, 1.0 = fully opaque
@@ -39,4 +39,4 @@ ethernet_timeout = 10           # seconds to wait for ethernet at boot
 wifi_timeout = 40               # seconds to wait for WiFi after ethernet timeout
 
 [display]
-hdmi_resolution = "1920x1080@60D"  # HDMI output: WxH@RateD (e.g. 1920x1080@60D)
+hdmi_resolution = "1920x1080@30D"  # HDMI output: WxH@RateD (e.g. 1920x1080@60D)

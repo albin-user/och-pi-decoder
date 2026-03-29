@@ -1,8 +1,10 @@
 #!/bin/bash -e
 
-# Install systemd service
-install -m 644 "${STAGE_DIR}/02-configure/files/pi-decoder.service" \
-    "${ROOTFS_DIR}/etc/systemd/system/"
+# Install systemd service (substitute user/group for non-pi usernames)
+sed "s|^User=.*|User=${FIRST_USER_NAME}|;s|^Group=.*|Group=${FIRST_USER_NAME}|" \
+    "${STAGE_DIR}/02-configure/files/pi-decoder.service" \
+    > "${ROOTFS_DIR}/etc/systemd/system/pi-decoder.service"
+chmod 644 "${ROOTFS_DIR}/etc/systemd/system/pi-decoder.service"
 
 # Create config directory and default config
 install -d -m 755 "${ROOTFS_DIR}/etc/pi-decoder"
@@ -31,9 +33,11 @@ install -m 755 "${STAGE_DIR}/02-configure/files/pi-decoder-network.sh" \
 install -m 644 "${STAGE_DIR}/02-configure/files/pi-decoder-network.service" \
     "${ROOTFS_DIR}/etc/systemd/system/"
 
-# Sudoers for pi user (service restart and reboot without password)
-install -m 440 "${STAGE_DIR}/02-configure/files/sudoers-pi-decoder" \
-    "${ROOTFS_DIR}/etc/sudoers.d/pi-decoder"
+# Sudoers for service user (service restart and reboot without password)
+sed "s|^pi |${FIRST_USER_NAME} |g" \
+    "${STAGE_DIR}/02-configure/files/sudoers-pi-decoder" \
+    > "${ROOTFS_DIR}/etc/sudoers.d/pi-decoder"
+chmod 440 "${ROOTFS_DIR}/etc/sudoers.d/pi-decoder"
 
 # Config ownership and group membership
 on_chroot << EOF
@@ -78,7 +82,8 @@ EOF
 for entry in \
     "tmpfs /var/log tmpfs nodev,nosuid,size=30M 0 0" \
     "tmpfs /var/tmp tmpfs nodev,nosuid,size=10M 0 0" \
-    "tmpfs /var/lib/systemd tmpfs nodev,nosuid,size=5M 0 0"; do
+    "tmpfs /var/lib/systemd tmpfs nodev,nosuid,size=5M 0 0" \
+    "tmpfs /tmp tmpfs nodev,nosuid,size=50M 0 0"; do
     mp=$(echo "$entry" | awk '{print $2}')
     if ! grep -q "tmpfs\s\+${mp}\s" "${ROOTFS_DIR}/etc/fstab"; then
         echo "$entry" >> "${ROOTFS_DIR}/etc/fstab"

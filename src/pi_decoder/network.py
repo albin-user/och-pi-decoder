@@ -417,7 +417,9 @@ def _get_wifi_metadata() -> dict:
         )
         for line in result.stdout.strip().splitlines():
             if line.startswith("yes:"):
-                meta["avg_signal"] = int(line.split(":")[1])
+                parts = line.split(":")
+                if len(parts) >= 2:
+                    meta["avg_signal"] = int(parts[1])
                 break
     except Exception:
         pass
@@ -429,7 +431,13 @@ def _get_wifi_metadata() -> dict:
         )
         for line in result.stdout.splitlines():
             if "freq:" in line:
-                freq = int(line.strip().split("freq:")[1].strip().split()[0])
+                freq_parts = line.strip().split("freq:")
+                if len(freq_parts) < 2:
+                    continue
+                freq_tokens = freq_parts[1].strip().split()
+                if not freq_tokens:
+                    continue
+                freq = int(freq_tokens[0])
                 if freq < 3000:
                     meta["wifi_band"] = "2.4 GHz"
                 elif freq < 5900:
