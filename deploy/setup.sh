@@ -23,7 +23,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 INSTALL_DIR="${INSTALL_DIR:-/opt/pi-decoder}"
 CONFIG_DIR="${CONFIG_DIR:-/etc/pi-decoder}"
-SERVICE_USER="${SERVICE_USER:-pi}"
+SERVICE_USER="${SERVICE_USER:-${SUDO_USER:-pi}}"
 
 # ── 2. System packages ──────────────────────────────────────────────
 echo -e "\n${GREEN}[1/8] Installing system packages...${NC}"
@@ -65,7 +65,8 @@ chown -R "$SERVICE_USER:$SERVICE_USER" "$CONFIG_DIR"
 # ── 5. systemd service ──────────────────────────────────────────────
 echo -e "\n${GREEN}[4/8] Installing systemd service...${NC}"
 
-cp "$SCRIPT_DIR/pi-decoder.service" /etc/systemd/system/
+sed "s/^User=.*/User=$SERVICE_USER/;s/^Group=.*/Group=$SERVICE_USER/" \
+    "$SCRIPT_DIR/pi-decoder.service" > /etc/systemd/system/pi-decoder.service
 cp "$SCRIPT_DIR/pi-decoder-network.service" /etc/systemd/system/
 chmod +x "$SCRIPT_DIR/pi-decoder-network.sh"
 systemctl daemon-reload
