@@ -209,8 +209,7 @@ def create_app(
 
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request):
-        return _TEMPLATES.TemplateResponse("index.html", {
-            "request": request,
+        return _TEMPLATES.TemplateResponse(request, "index.html", context={
             "config": config,
         })
 
