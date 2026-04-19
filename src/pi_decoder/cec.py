@@ -60,35 +60,43 @@ async def configure_adapter() -> bool:
 _power_cache: str = "unknown"
 _power_cache_time: float = 0.0
 _POWER_CACHE_TTL = 10.0  # seconds
-_power_lock: asyncio.Lock | None = None
+# Serialises ALL cec-client invocations. Only one process can hold /dev/cec0
+# at a time — concurrent calls get EBUSY (errno 16). This lock queues them.
+_cec_lock: asyncio.Lock | None = None
 
 
 def _get_lock() -> asyncio.Lock:
     """Lazily create the lock (must be done inside a running event loop)."""
-    global _power_lock
-    if _power_lock is None:
-        _power_lock = asyncio.Lock()
-    return _power_lock
+    global _cec_lock
+    if _cec_lock is None:
+        _cec_lock = asyncio.Lock()
+    return _cec_lock
 
 
 async def _run_cec(command: str) -> str:
-    """Pipe a command to cec-client and return stdout."""
-    proc = await asyncio.create_subprocess_exec(
-        "cec-client", "-s", "-d", "1", "-o", _CEC_OSD_NAME,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    try:
-        stdout, _ = await asyncio.wait_for(
-            proc.communicate(input=command.encode()),
-            timeout=_TIMEOUT,
+    """Pipe a command to cec-client and return stdout.
+
+    Serialised by _cec_lock — concurrent subprocess invocations would collide
+    on /dev/cec0 (EBUSY). Queued callers wait for their turn.
+    """
+    lock = _get_lock()
+    async with lock:
+        proc = await asyncio.create_subprocess_exec(
+            "cec-client", "-s", "-d", "1", "-o", _CEC_OSD_NAME,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
-        return stdout.decode(errors="replace")
-    except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
-        raise TimeoutError(f"cec-client timed out after {_TIMEOUT}s")
+        try:
+            stdout, _ = await asyncio.wait_for(
+                proc.communicate(input=command.encode()),
+                timeout=_TIMEOUT,
+            )
+            return stdout.decode(errors="replace")
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            raise TimeoutError(f"cec-client timed out after {_TIMEOUT}s")
 
 
 # ── Power ─────────────────────────────────────────────────────────
@@ -127,28 +135,22 @@ async def get_power_status() -> str:
     if now - _power_cache_time < _POWER_CACHE_TTL:
         return _power_cache
 
-    lock = _get_lock()
-    async with lock:
-        # Re-check after acquiring lock (another coroutine may have refreshed)
-        now = time.monotonic()
-        if now - _power_cache_time < _POWER_CACHE_TTL:
-            return _power_cache
-
-        try:
-            output = await _run_cec("pow 0")
-            lower = output.lower()
-            if "power status: on" in lower:
-                status = "on"
-            elif "power status: standby" in lower:
-                status = "standby"
-            else:
-                status = "unknown"
-        except Exception:
+    # _run_cec serialises subprocess access, so no extra lock needed here.
+    try:
+        output = await _run_cec("pow 0")
+        lower = output.lower()
+        if "power status: on" in lower:
+            status = "on"
+        elif "power status: standby" in lower:
+            status = "standby"
+        else:
             status = "unknown"
+    except Exception:
+        status = "unknown"
 
-        _power_cache = status
-        _power_cache_time = time.monotonic()
-        return _power_cache
+    _power_cache = status
+    _power_cache_time = time.monotonic()
+    return _power_cache
 
 
 # ── Source / Input ────────────────────────────────────────────────

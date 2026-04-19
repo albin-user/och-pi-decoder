@@ -57,6 +57,41 @@ class TestRunCec:
                 await cec._run_cec("on 0")
         proc.kill.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_concurrent_calls_are_serialised(self):
+        """Multiple concurrent _run_cec calls must NOT spawn overlapping subprocesses.
+
+        Without the lock, simultaneous calls race on /dev/cec0 and fail with EBUSY
+        (errno 16). The lock should queue them so only one subprocess runs at a time.
+        """
+        cec._cec_lock = None  # reset so the test gets a fresh lock
+        active_count = 0
+        max_active = 0
+
+        async def slow_communicate(input=None):
+            nonlocal active_count, max_active
+            active_count += 1
+            max_active = max(max_active, active_count)
+            await asyncio.sleep(0.05)  # simulate cec-client work
+            active_count -= 1
+            return (b"done", b"")
+
+        def make_proc(*args, **kwargs):
+            proc = AsyncMock()
+            proc.communicate = slow_communicate
+            proc.kill = MagicMock()
+            proc.wait = AsyncMock()
+            return proc
+
+        with patch("pi_decoder.cec.asyncio.create_subprocess_exec", side_effect=lambda *a, **k: make_proc()):
+            await asyncio.gather(
+                cec._run_cec("on 0"),
+                cec._run_cec("on 0"),
+                cec._run_cec("on 0"),
+                cec._run_cec("on 0"),
+            )
+        assert max_active == 1, f"Expected serialised calls; saw {max_active} concurrent"
+
 
 class TestPowerCommands:
 
@@ -64,7 +99,7 @@ class TestPowerCommands:
         """Reset CEC power cache between tests."""
         cec._power_cache = "unknown"
         cec._power_cache_time = 0.0
-        cec._power_lock = None
+        cec._cec_lock = None
 
     @pytest.mark.asyncio
     async def test_power_on(self):
