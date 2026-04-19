@@ -10,6 +10,7 @@ import time
 log = logging.getLogger(__name__)
 
 _TIMEOUT = 10  # seconds — CEC bus init takes 2-3s
+_CEC_OSD_NAME = "Pi-Decoder"
 
 # Cached availability (checked once at startup, refreshed on demand)
 _cec_available: bool | None = None
@@ -23,6 +24,37 @@ def is_available() -> bool:
         if not _cec_available:
             log.info("cec-client not found — CEC controls will be disabled")
     return _cec_available
+
+
+async def configure_adapter() -> bool:
+    """Register the kernel CEC adapter as a Playback device.
+
+    Without a claimed logical address, Samsung Anynet+ rejects CEC messages
+    as coming from "Unregistered". This registers LA 4 (Playback Device 1)
+    with our OSD name so cec-client commands land on a valid identity.
+    Safe to call repeatedly. Returns True on success.
+    """
+    if shutil.which("cec-ctl") is None:
+        log.info("cec-ctl not found — skipping CEC adapter pre-registration")
+        return False
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "sudo", "-n", "cec-ctl", "--playback", "--osd-name", _CEC_OSD_NAME,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=5.0)
+        if proc.returncode == 0:
+            log.info("CEC adapter registered as Playback device '%s'", _CEC_OSD_NAME)
+            return True
+        log.warning("cec-ctl registration failed: %s", stderr.decode(errors="replace").strip()[:200])
+        return False
+    except asyncio.TimeoutError:
+        log.warning("cec-ctl registration timed out")
+        return False
+    except Exception as e:
+        log.warning("cec-ctl registration error: %s", e)
+        return False
 
 # Cached power status to avoid spawning cec-client every 2s per WS client.
 _power_cache: str = "unknown"
@@ -42,7 +74,7 @@ def _get_lock() -> asyncio.Lock:
 async def _run_cec(command: str) -> str:
     """Pipe a command to cec-client and return stdout."""
     proc = await asyncio.create_subprocess_exec(
-        "cec-client", "-s", "-d", "1",
+        "cec-client", "-s", "-d", "1", "-o", _CEC_OSD_NAME,
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,

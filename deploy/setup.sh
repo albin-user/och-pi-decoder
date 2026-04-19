@@ -29,7 +29,7 @@ SERVICE_USER="${SERVICE_USER:-${SUDO_USER:-pi}}"
 echo -e "\n${GREEN}[1/8] Installing system packages...${NC}"
 
 apt update
-apt install -y mpv python3-pip cec-utils avahi-daemon yt-dlp dnsmasq-base
+apt install -y mpv python3-pip cec-utils v4l-utils avahi-daemon yt-dlp dnsmasq-base
 
 # ── 3. Install Python package (venv) ─────────────────────────────────
 echo -e "\n${GREEN}[2/8] Installing Pi-Decoder Python package...${NC}"
@@ -130,13 +130,16 @@ set_boot_config "disable_overscan" "1"
 set_boot_config "hdmi_drive" "2"
 
 # KMS/DRM resolution forcing (Pi 4/5 on Bookworm ignore legacy hdmi_* settings)
-# Append video= kernel parameter to cmdline.txt for 1080p30 on the KMS driver
+# Append video= kernel parameter to cmdline.txt for 1080p30 on the KMS driver.
+# NOTE: Do NOT use the 'D' (force digital) flag — it skips EDID readback, which
+# breaks libcec physical-address detection (Samsung Anynet+ then rejects all
+# CEC messages as coming from "Unregistered").
 CMDLINE="/boot/firmware/cmdline.txt"
 [ -f "$CMDLINE" ] || CMDLINE="/boot/cmdline.txt"
 if [ -f "$CMDLINE" ]; then
     # Remove any existing video= parameter, then append ours
     sed -i 's/ video=[^ ]*//' "$CMDLINE"
-    sed -i 's/$/ video=HDMI-A-1:1920x1080@30D/' "$CMDLINE"
+    sed -i 's/$/ video=HDMI-A-1:1920x1080@30/' "$CMDLINE"
     echo "  Set KMS resolution: 1920x1080@30Hz (cmdline.txt)"
     # Prevent console blanking (no desktop to manage DPMS)
     if ! grep -q 'consoleblank=' "$CMDLINE"; then

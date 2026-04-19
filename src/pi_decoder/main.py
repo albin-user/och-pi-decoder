@@ -52,6 +52,10 @@ async def async_main() -> None:
     async def _cec_startup():
         try:
             from pi_decoder import cec
+            # Pre-register the CEC adapter with a logical address and OSD name.
+            # Samsung Anynet+ rejects messages from "Unregistered" sources; cec-client
+            # alone doesn't always claim an LA cleanly on Pi 5, so do it explicitly first.
+            await cec.configure_adapter()
             await cec.power_on()
             await asyncio.sleep(10)
             await cec.active_source()

@@ -35,13 +35,15 @@ class TestRunCec:
         proc = make_proc("ok")
         with patch("pi_decoder.cec.asyncio.create_subprocess_exec", return_value=proc) as mock_exec:
             await cec._run_cec("standby 0")
-        # Verify cec-client is called with -s -d 1
+        # Verify cec-client is called with -s -d 1 and -o Pi-Decoder (OSD name)
         mock_exec.assert_called_once()
         args = mock_exec.call_args[0]
         assert args[0] == "cec-client"
         assert "-s" in args
         assert "-d" in args
         assert "1" in args
+        assert "-o" in args
+        assert "Pi-Decoder" in args
 
     @pytest.mark.asyncio
     async def test_timeout_kills_process(self):
@@ -174,6 +176,49 @@ class TestIsAvailable:
             cec.is_available()
             cec.is_available()
         mock.assert_called_once()
+
+
+class TestConfigureAdapter:
+
+    @pytest.mark.asyncio
+    async def test_configure_adapter_success(self):
+        proc = make_proc("")
+        proc.returncode = 0
+        with patch("pi_decoder.cec.shutil.which", return_value="/usr/bin/cec-ctl"), \
+             patch("pi_decoder.cec.asyncio.create_subprocess_exec", return_value=proc) as mock_exec:
+            ok = await cec.configure_adapter()
+        assert ok is True
+        args = mock_exec.call_args[0]
+        assert args[0] == "sudo"
+        assert "cec-ctl" in args
+        assert "--playback" in args
+        assert "--osd-name" in args
+        assert "Pi-Decoder" in args
+
+    @pytest.mark.asyncio
+    async def test_configure_adapter_missing_binary(self):
+        with patch("pi_decoder.cec.shutil.which", return_value=None):
+            ok = await cec.configure_adapter()
+        assert ok is False
+
+    @pytest.mark.asyncio
+    async def test_configure_adapter_nonzero_exit(self):
+        proc = AsyncMock()
+        proc.communicate = AsyncMock(return_value=(b"", b"permission denied"))
+        proc.returncode = 1
+        with patch("pi_decoder.cec.shutil.which", return_value="/usr/bin/cec-ctl"), \
+             patch("pi_decoder.cec.asyncio.create_subprocess_exec", return_value=proc):
+            ok = await cec.configure_adapter()
+        assert ok is False
+
+    @pytest.mark.asyncio
+    async def test_configure_adapter_timeout(self):
+        proc = AsyncMock()
+        proc.communicate = AsyncMock(side_effect=asyncio.TimeoutError())
+        with patch("pi_decoder.cec.shutil.which", return_value="/usr/bin/cec-ctl"), \
+             patch("pi_decoder.cec.asyncio.create_subprocess_exec", return_value=proc):
+            ok = await cec.configure_adapter()
+        assert ok is False
 
 
 class TestSourceCommands:

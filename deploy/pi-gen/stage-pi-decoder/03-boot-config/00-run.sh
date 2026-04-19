@@ -14,5 +14,6 @@ EOF
 # KMS/DRM resolution + prevent console blanking
 CMDLINE="${ROOTFS_DIR}/boot/firmware/cmdline.txt"
 if [ -f "$CMDLINE" ]; then
-    sed -i 's/$/ video=HDMI-A-1:1920x1080@30D consoleblank=0/' "$CMDLINE"
+    # NOTE: No 'D' flag — it skips EDID readback and breaks libcec PA detection
+    sed -i 's/$/ video=HDMI-A-1:1920x1080@30 consoleblank=0/' "$CMDLINE"
 fi

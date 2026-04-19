@@ -2,6 +2,7 @@ mpv
 python3-pip
 unattended-upgrades
 cec-utils
+v4l-utils
 avahi-daemon
 yt-dlp
 fonts-dejavu-core

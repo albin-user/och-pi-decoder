@@ -10,3 +10,4 @@ pi ALL=(ALL) NOPASSWD: /bin/mount -o remount\,rw /
 pi ALL=(ALL) NOPASSWD: /bin/mount -o remount\,ro /
 pi ALL=(ALL) NOPASSWD: /bin/mount -o remount\,rw /boot/firmware
 pi ALL=(ALL) NOPASSWD: /bin/mount -o remount\,ro /boot/firmware
+pi ALL=(ALL) NOPASSWD: /usr/bin/cec-ctl *
