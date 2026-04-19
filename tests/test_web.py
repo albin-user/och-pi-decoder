@@ -364,6 +364,57 @@ class TestCecEndpoints:
         assert data["status"] == "on"
 
 
+class TestCecAudioOutput:
+    """GET /api/cec/audio-output and POST /api/cec/prefer-audio-system."""
+
+    @patch("pi_decoder.cec.get_system_audio_mode", new_callable=AsyncMock, return_value="on")
+    @patch("pi_decoder.cec.detect_audio_system", new_callable=AsyncMock,
+           return_value={"logical_addr": 5, "phys_addr": 0x3000,
+                         "phys_addr_str": "3.0.0.0", "vendor": "Sony", "osd": "HT-SF150"})
+    def test_audio_output_soundbar(self, _mock_detect, _mock_mode, client):
+        resp = client.get("/api/cec/audio-output")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["output"] == "soundbar"
+        assert body["system_audio_mode"] == "on"
+        assert body["audio_system"]["vendor"] == "Sony"
+
+    @patch("pi_decoder.cec.get_system_audio_mode", new_callable=AsyncMock, return_value="off")
+    @patch("pi_decoder.cec.detect_audio_system", new_callable=AsyncMock, return_value=None)
+    def test_audio_output_tv_speakers(self, _mock_detect, _mock_mode, client):
+        resp = client.get("/api/cec/audio-output")
+        assert resp.status_code == 200
+        assert resp.json()["output"] == "tv-speakers"
+
+    @patch("pi_decoder.cec.get_system_audio_mode", new_callable=AsyncMock, return_value="unknown")
+    @patch("pi_decoder.cec.detect_audio_system", new_callable=AsyncMock, return_value=None)
+    def test_audio_output_unknown(self, _mock_detect, _mock_mode, client):
+        resp = client.get("/api/cec/audio-output")
+        assert resp.json()["output"] == "unknown"
+
+    def test_prefer_audio_system_enable(self, client, config):
+        resp = client.post("/api/cec/prefer-audio-system", json={"enabled": True})
+        assert resp.status_code == 200
+        assert resp.json()["prefer_audio_system"] is True
+        assert config.cec.prefer_audio_system is True
+
+    def test_prefer_audio_system_disable(self, client, config):
+        resp = client.post("/api/cec/prefer-audio-system", json={"enabled": False})
+        assert resp.status_code == 200
+        assert resp.json()["prefer_audio_system"] is False
+        assert config.cec.prefer_audio_system is False
+
+    def test_prefer_audio_system_string_truthy(self, client, config):
+        resp = client.post("/api/cec/prefer-audio-system", json={"enabled": "on"})
+        assert resp.json()["prefer_audio_system"] is True
+        config.cec.prefer_audio_system = False  # reset for next test
+
+    def test_prefer_audio_system_string_falsey(self, client, config):
+        resp = client.post("/api/cec/prefer-audio-system", json={"enabled": "0"})
+        assert resp.json()["prefer_audio_system"] is False
+
+
 class TestConfigImport:
     def test_import_valid_toml(self, client, config):
         toml_content = b'[general]\nname = "Imported-Decoder"\n'

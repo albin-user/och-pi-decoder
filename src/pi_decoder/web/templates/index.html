@@ -697,6 +697,27 @@
 
         <button class="btn btn-primary" onclick="saveHdmiResolution(this)">Apply HDMI Resolution</button>
 
+        <h3 class="section-heading">Audio Routing (CEC)</h3>
+
+        <div class="form-group">
+          <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+            <input type="checkbox" id="cecPreferAudioSystem" onchange="saveCecPreferAudioSystem(this)" />
+            <span>Prefer soundbar / audio system when TV turns on</span>
+          </label>
+          <div class="help" style="margin-top:4px">
+            If a soundbar or AVR (eARC/ARC) is detected on the CEC bus at startup, request the TV route audio to it instead of the TV speakers. Some TVs (Samsung Anynet+) ignore this from a playback device — check "Current output" below to verify.
+          </div>
+        </div>
+
+        <div class="stat-card mb-16" style="display:inline-block">
+          <div class="label">Current audio output</div>
+          <div class="value" id="cecAudioOutput">Loading...</div>
+          <div class="help" id="cecAudioSystemInfo" style="margin-top:4px; font-size:12px;"></div>
+        </div>
+        <div>
+          <button class="btn btn-secondary" type="button" onclick="loadCecAudioOutput()">Refresh</button>
+        </div>
+
         <h3 class="section-heading">Version</h3>
 
         <div class="stat-card mb-16" style="display:inline-block">

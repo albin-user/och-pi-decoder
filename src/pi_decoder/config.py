@@ -95,6 +95,16 @@ class DisplayConfig:
 
 
 @dataclass
+class CECConfig:
+    # On startup, if an Audio System (soundbar/AVR, e.g. eARC/ARC device) is
+    # detected on the CEC bus, request that audio be routed to it instead of
+    # TV speakers. Best-effort — some TVs (e.g. Samsung Anynet+) ignore the
+    # request from playback devices. The setting is still useful for the
+    # current-state readout and for TVs that honour it.
+    prefer_audio_system: bool = True
+
+
+@dataclass
 class Config:
     general: GeneralConfig = field(default_factory=GeneralConfig)
     stream: StreamConfig = field(default_factory=StreamConfig)
@@ -103,6 +113,7 @@ class Config:
     web: WebConfig = field(default_factory=WebConfig)
     network: NetworkConfig = field(default_factory=NetworkConfig)
     display: DisplayConfig = field(default_factory=DisplayConfig)
+    cec: CECConfig = field(default_factory=CECConfig)
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -294,6 +305,8 @@ def load_config(path: str | Path | None = None) -> Config:
                 _apply_dict(cfg.network, raw["network"])
             if "display" in raw:
                 _apply_dict(cfg.display, raw["display"])
+            if "cec" in raw:
+                _apply_dict(cfg.cec, raw["cec"])
         except Exception:
             log.exception("Failed to parse config at %s — using defaults", path)
     else:
@@ -314,6 +327,7 @@ def to_dict_safe(cfg: Config) -> dict:
         "web": _section_to_dict(cfg.web),
         "network": _section_to_dict(cfg.network),
         "display": _section_to_dict(cfg.display),
+        "cec": _section_to_dict(cfg.cec),
     }
     # Strip secrets
     data["pco"].pop("secret", None)
@@ -334,6 +348,7 @@ def save_config(cfg: Config, path: str | Path | None = None) -> None:
         "web": _section_to_dict(cfg.web),
         "network": _section_to_dict(cfg.network),
         "display": _section_to_dict(cfg.display),
+        "cec": _section_to_dict(cfg.cec),
     }
 
     with writable("/"):

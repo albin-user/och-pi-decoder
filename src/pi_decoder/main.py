@@ -62,6 +62,14 @@ async def async_main() -> None:
             log.info("CEC: TV powered on and input switched to Pi")
         except Exception as e:
             log.warning("CEC startup failed (TV may not support CEC): %s", e)
+            return
+        # If an audio system is on the bus and the user preference is on,
+        # best-effort request SAM=on so audio routes to soundbar/AVR.
+        try:
+            summary = await cec.ensure_audio_system_preferred(config)
+            log.info("CEC audio routing: %s", summary)
+        except Exception as e:
+            log.warning("CEC audio routing check failed: %s", e)
 
     asyncio.create_task(_cec_startup())
 

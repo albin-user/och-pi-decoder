@@ -498,6 +498,27 @@ class TestSaveConfig:
         loaded = load_config(tmp_config)
         assert loaded.stream.backup_url == "rtmp://backup.local/live"
 
+    def test_cec_prefer_audio_system_default_true(self, tmp_config: Path):
+        """The toggle defaults to True (force soundbar when audio system present)."""
+        cfg = Config()
+        assert cfg.cec.prefer_audio_system is True
+
+    def test_cec_prefer_audio_system_roundtrip(self, tmp_config: Path):
+        """Toggle persists across save/load (respecting read-only root via save_config)."""
+        cfg = Config()
+        cfg.cec.prefer_audio_system = False
+        save_config(cfg, tmp_config)
+        loaded = load_config(tmp_config)
+        assert loaded.cec.prefer_audio_system is False
+
+    def test_cec_section_missing_uses_default(self, tmp_config: Path):
+        """If the TOML file has no [cec] section (upgrade from older install),
+        the default value kicks in cleanly."""
+        tmp_config.write_text('[general]\nname = "Old-Decoder"\n')
+        loaded = load_config(tmp_config)
+        assert loaded.cec.prefer_audio_system is True
+        assert loaded.general.name == "Old-Decoder"
+
     def test_presets_roundtrip(self, tmp_config: Path):
         """Save and load should preserve presets list-of-dicts."""
         cfg = Config()

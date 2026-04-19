@@ -40,3 +40,6 @@ wifi_timeout = 40               # seconds to wait for WiFi after ethernet timeou
 
 [display]
 hdmi_resolution = "1920x1080@30D"  # HDMI output: WxH@RateD (e.g. 1920x1080@60D)
+
+[cec]
+prefer_audio_system = true   # When TV turns on, request audio route to a soundbar/AVR (eARC/ARC) if detected. Some TVs (Samsung Anynet+) ignore this from a playback device.

@@ -386,3 +386,175 @@ class TestKeyTap:
         with patch("pi_decoder.cec.asyncio.create_subprocess_exec", return_value=fail_proc):
             ok = await cec._key_tap("volume-up")
         assert ok is False
+
+
+class TestAudioSystemDetection:
+    """Audio routing helpers: detect_audio_system, get_system_audio_mode,
+    request_system_audio_mode, ensure_audio_system_preferred."""
+
+    def setup_method(self):
+        cec._cec_lock = None
+
+    @pytest.mark.asyncio
+    async def test_detect_audio_system_parses_scan_output(self):
+        scan_output = (
+            "device #0: TV\n"
+            "address:       0.0.0.0\n"
+            "vendor:        Samsung\n"
+            "device #1: Recorder 1\n"
+            "address:       2.0.0.0\n"
+            "device #5: Audio\n"
+            "address:       3.0.0.0\n"
+            "vendor:        Sony\n"
+            "osd string:    HT-SF150\n"
+            "currently active source: unknown (-1)\n"
+        )
+        proc = AsyncMock()
+        proc.communicate = AsyncMock(return_value=(scan_output.encode(), b""))
+        proc.returncode = 0
+        with patch("pi_decoder.cec.asyncio.create_subprocess_exec", return_value=proc):
+            audio = await cec.detect_audio_system()
+        assert audio is not None
+        assert audio["logical_addr"] == 5
+        assert audio["phys_addr"] == 0x3000
+        assert audio["phys_addr_str"] == "3.0.0.0"
+        assert audio["vendor"] == "Sony"
+        assert audio["osd"] == "HT-SF150"
+
+    @pytest.mark.asyncio
+    async def test_detect_audio_system_none_when_no_device_5(self):
+        scan_output = (
+            "device #0: TV\n"
+            "address:       0.0.0.0\n"
+            "device #1: Recorder 1\n"
+            "address:       2.0.0.0\n"
+        )
+        proc = AsyncMock()
+        proc.communicate = AsyncMock(return_value=(scan_output.encode(), b""))
+        proc.returncode = 0
+        with patch("pi_decoder.cec.asyncio.create_subprocess_exec", return_value=proc):
+            audio = await cec.detect_audio_system()
+        assert audio is None
+
+    @pytest.mark.asyncio
+    async def test_get_system_audio_mode_on(self):
+        out = b"    Received from Audio System (5):\n\tsys-aud-status: on (0x01)\n"
+        proc = AsyncMock()
+        proc.communicate = AsyncMock(return_value=(out, b""))
+        proc.returncode = 0
+        with patch("pi_decoder.cec.shutil.which", return_value="/usr/bin/cec-ctl"), \
+             patch("pi_decoder.cec.asyncio.create_subprocess_exec", return_value=proc):
+            mode = await cec.get_system_audio_mode()
+        assert mode == "on"
+
+    @pytest.mark.asyncio
+    async def test_get_system_audio_mode_off(self):
+        out = b"    Received from Audio System (5):\n\tsys-aud-status: off (0x00)\n"
+        proc = AsyncMock()
+        proc.communicate = AsyncMock(return_value=(out, b""))
+        proc.returncode = 0
+        with patch("pi_decoder.cec.shutil.which", return_value="/usr/bin/cec-ctl"), \
+             patch("pi_decoder.cec.asyncio.create_subprocess_exec", return_value=proc):
+            mode = await cec.get_system_audio_mode()
+        assert mode == "off"
+
+    @pytest.mark.asyncio
+    async def test_get_system_audio_mode_unknown_when_no_response(self):
+        out = b"    Received: nothing matching\n"
+        proc = AsyncMock()
+        proc.communicate = AsyncMock(return_value=(out, b""))
+        proc.returncode = 0
+        with patch("pi_decoder.cec.shutil.which", return_value="/usr/bin/cec-ctl"), \
+             patch("pi_decoder.cec.asyncio.create_subprocess_exec", return_value=proc):
+            mode = await cec.get_system_audio_mode()
+        assert mode == "unknown"
+
+    @pytest.mark.asyncio
+    async def test_get_system_audio_mode_no_cec_ctl(self):
+        with patch("pi_decoder.cec.shutil.which", return_value=None):
+            mode = await cec.get_system_audio_mode()
+        assert mode == "unknown"
+
+    @pytest.mark.asyncio
+    async def test_request_system_audio_mode_enable(self):
+        proc = AsyncMock()
+        proc.communicate = AsyncMock(return_value=(b"Transmit: Tx, OK", b""))
+        proc.returncode = 0
+        with patch("pi_decoder.cec.shutil.which", return_value="/usr/bin/cec-ctl"), \
+             patch("pi_decoder.cec.asyncio.create_subprocess_exec", return_value=proc) as mock_exec:
+            ok = await cec.request_system_audio_mode(0x3000, enable=True)
+        assert ok is True
+        args = mock_exec.call_args[0]
+        assert "--system-audio-mode-request" in args
+        assert "phys-addr=0x3000" in args
+
+    @pytest.mark.asyncio
+    async def test_request_system_audio_mode_disable_sends_ffff(self):
+        proc = AsyncMock()
+        proc.communicate = AsyncMock(return_value=(b"Transmit: Tx, OK", b""))
+        proc.returncode = 0
+        with patch("pi_decoder.cec.shutil.which", return_value="/usr/bin/cec-ctl"), \
+             patch("pi_decoder.cec.asyncio.create_subprocess_exec", return_value=proc) as mock_exec:
+            ok = await cec.request_system_audio_mode(0x3000, enable=False)
+        assert ok is True
+        args = mock_exec.call_args[0]
+        assert "phys-addr=0xffff" in args
+
+    @pytest.mark.asyncio
+    async def test_ensure_audio_system_preferred_disabled(self):
+        """If config toggle is off, do nothing."""
+        class FakeCfg:
+            class cec:
+                prefer_audio_system = False
+        result = await cec.ensure_audio_system_preferred(FakeCfg())
+        assert result["enabled"] is False
+        assert result["action"] == "disabled"
+
+    @pytest.mark.asyncio
+    async def test_ensure_audio_system_preferred_no_audio_system(self):
+        """No audio system on bus → skip with clear action."""
+        class FakeCfg:
+            class cec:
+                prefer_audio_system = True
+        with patch("pi_decoder.cec.detect_audio_system", new_callable=AsyncMock, return_value=None):
+            result = await cec.ensure_audio_system_preferred(FakeCfg())
+        assert result["action"] == "no-audio-system"
+
+    @pytest.mark.asyncio
+    async def test_ensure_audio_system_preferred_already_on(self):
+        """Audio system detected and SAM already on → no further action."""
+        class FakeCfg:
+            class cec:
+                prefer_audio_system = True
+        audio = {"logical_addr": 5, "phys_addr": 0x3000, "vendor": "Sony"}
+        with patch("pi_decoder.cec.detect_audio_system", new_callable=AsyncMock, return_value=audio), \
+             patch("pi_decoder.cec.get_system_audio_mode", new_callable=AsyncMock, return_value="on"):
+            result = await cec.ensure_audio_system_preferred(FakeCfg())
+        assert result["action"] == "already-on"
+        assert result["current"] == "on"
+
+    @pytest.mark.asyncio
+    async def test_ensure_audio_system_preferred_requests_on(self):
+        """SAM off → best-effort request enable."""
+        class FakeCfg:
+            class cec:
+                prefer_audio_system = True
+        audio = {"logical_addr": 5, "phys_addr": 0x3000, "vendor": "Sony"}
+        with patch("pi_decoder.cec.detect_audio_system", new_callable=AsyncMock, return_value=audio), \
+             patch("pi_decoder.cec.get_system_audio_mode", new_callable=AsyncMock, return_value="off"), \
+             patch("pi_decoder.cec.request_system_audio_mode", new_callable=AsyncMock, return_value=True) as mock_req:
+            result = await cec.ensure_audio_system_preferred(FakeCfg())
+        assert result["action"] == "requested-on"
+        mock_req.assert_awaited_once_with(0x3000, enable=True)
+
+    @pytest.mark.asyncio
+    async def test_ensure_audio_system_preferred_request_failed(self):
+        class FakeCfg:
+            class cec:
+                prefer_audio_system = True
+        audio = {"logical_addr": 5, "phys_addr": 0x3000}
+        with patch("pi_decoder.cec.detect_audio_system", new_callable=AsyncMock, return_value=audio), \
+             patch("pi_decoder.cec.get_system_audio_mode", new_callable=AsyncMock, return_value="off"), \
+             patch("pi_decoder.cec.request_system_audio_mode", new_callable=AsyncMock, return_value=False):
+            result = await cec.ensure_audio_system_preferred(FakeCfg())
+        assert result["action"] == "request-failed"

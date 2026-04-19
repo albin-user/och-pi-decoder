@@ -161,6 +161,9 @@
       loadLogs();
       loadVersion();
       loadDisplayModes();
+      if (typeof window.loadCecAudioOutput === "function") {
+        window.loadCecAudioOutput();
+      }
     }
   }
 
@@ -1089,6 +1092,48 @@
         }
       }));
     });
+  };
+
+  // ── CEC audio routing ──────────────────────────────────────────────
+
+  window.loadCecAudioOutput = function () {
+    var outEl = document.getElementById("cecAudioOutput");
+    var infoEl = document.getElementById("cecAudioSystemInfo");
+    var chk = document.getElementById("cecPreferAudioSystem");
+    if (outEl) outEl.textContent = "Checking...";
+    if (infoEl) infoEl.textContent = "";
+    apiGet("/api/cec/audio-output").then(function (d) {
+      if (!d.ok) {
+        if (outEl) outEl.textContent = "Unknown";
+        return;
+      }
+      if (outEl) {
+        if (d.output === "soundbar") outEl.textContent = "Soundbar";
+        else if (d.output === "tv-speakers") outEl.textContent = "TV speakers";
+        else outEl.textContent = "Unknown";
+      }
+      if (infoEl) {
+        if (d.audio_system) {
+          var vendor = d.audio_system.vendor || "Audio System";
+          var osd = d.audio_system.osd || "";
+          var pa = d.audio_system.phys_addr_str || "";
+          infoEl.textContent = "Detected: " + vendor + (osd ? " (" + osd + ")" : "") + (pa ? " @ " + pa : "");
+        } else {
+          infoEl.textContent = "No audio system detected on CEC bus.";
+        }
+      }
+      if (chk) chk.checked = !!d.prefer_audio_system;
+    }).catch(function () {
+      if (outEl) outEl.textContent = "Unknown";
+    });
+  };
+
+  window.saveCecPreferAudioSystem = function (checkbox) {
+    var enabled = !!(checkbox && checkbox.checked);
+    apiPost("/api/cec/prefer-audio-system", { enabled: enabled }).then(function (d) {
+      if (d.ok) toast("Audio routing preference saved");
+      else toast(d.error || "Failed to save preference", "error");
+    }).catch(function () { toast("Failed to save preference", "error"); });
   };
 
   // ── config import ──────────────────────────────────────────────────

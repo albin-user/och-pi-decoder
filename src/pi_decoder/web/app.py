@@ -926,6 +926,49 @@ def create_app(
             return JSONResponse({"ok": False, "error": f"CEC mute failed: {e}"}, 500)
         return {"ok": True, **result}
 
+    @app.get("/api/cec/audio-output")
+    async def api_cec_audio_output():
+        """Current audio routing — 'soundbar' (SAM on), 'tv-speakers' (SAM off),
+        or 'unknown' (no audio system detected or query failed). Also returns
+        the detected audio system so the UI can show it.
+        """
+        from pi_decoder import cec
+        audio = await cec.detect_audio_system()
+        mode = await cec.get_system_audio_mode()
+        if mode == "on":
+            out = "soundbar"
+        elif mode == "off":
+            out = "tv-speakers"
+        else:
+            out = "unknown"
+        return {
+            "ok": True,
+            "output": out,
+            "system_audio_mode": mode,
+            "audio_system": audio,
+            "prefer_audio_system": bool(config.cec.prefer_audio_system),
+        }
+
+    @app.post("/api/cec/prefer-audio-system")
+    async def api_cec_prefer_audio_system(request: Request):
+        """Toggle the 'prefer soundbar on TV power-on' config flag.
+
+        Accepts JSON body {"enabled": true|false} (or "on"/"off"/"1"/"0"). Saves
+        to config.toml so the preference persists across reboots.
+        """
+        data = await request.json()
+        val = data.get("enabled", data.get("value"))
+        if isinstance(val, str):
+            truthy = val.strip().lower() in ("1", "true", "on", "yes")
+        else:
+            truthy = bool(val)
+        async with _config_lock:
+            config.cec.prefer_audio_system = truthy
+            validate_config(config)
+            save_config(config, config_path)
+        log.info("CEC: prefer_audio_system set to %s", truthy)
+        return {"ok": True, "prefer_audio_system": truthy}
+
     # ── Display / HDMI resolution ─────────────────────────────────────
 
     @app.get("/api/display/modes")

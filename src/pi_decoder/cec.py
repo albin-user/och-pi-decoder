@@ -275,3 +275,173 @@ async def _repeat_tap(key: str, steps: int) -> dict:
             break
         sent += 1
     return {"ok": sent > 0, "sent": sent, "dropped": False}
+
+
+# ── Audio System Detection & Routing ───────────────────────────────
+#
+# Samsung Anynet+ and most HDMI-CEC AVRs/soundbars implement <System Audio
+# Mode Request> (opcode 0x70). Playback devices (us, LA 4) can ASK the TV
+# to route audio to an audio system at a given physical address. Samsung
+# often replies with Feature Abort from a playback device, but:
+#   - We can still reliably READ the current mode by asking the soundbar
+#   - On non-Samsung TVs the request is honoured
+#   - The read value is useful for the web UI and Companion status
+#
+# Soundbar PA re-parsed from `cec-client scan` output each time instead
+# of hardcoding, so moving the soundbar between TV HDMI ports still works.
+
+
+async def detect_audio_system(timeout: float = 8.0) -> dict | None:
+    """Scan the CEC bus and return info about an Audio System (LA 5), or None.
+
+    Returns a dict with keys: {"logical_addr", "phys_addr", "vendor", "osd"}.
+    phys_addr is the integer form (e.g. 0x3000 for "3.0.0.0").
+    """
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "cec-client", "-s", "-d", "1", "-o", _CEC_OSD_NAME,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        lock = _get_lock()
+        async with lock:
+            stdout, _ = await asyncio.wait_for(
+                proc.communicate(input=b"scan\n"),
+                timeout=timeout,
+            )
+    except Exception as e:
+        log.debug("detect_audio_system: scan failed: %s", e)
+        return None
+
+    text = stdout.decode(errors="replace")
+    # Walk the scan output looking for "device #5: Audio" block
+    block = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("device #5"):
+            block = {}
+            continue
+        if block is None:
+            continue
+        if stripped.startswith("device #"):
+            break  # end of Audio block
+        if ":" in stripped:
+            key, _, val = stripped.partition(":")
+            block[key.strip().lower()] = val.strip()
+
+    if not block:
+        return None
+
+    pa_str = block.get("address", "")
+    # "3.0.0.0" -> 0x3000
+    try:
+        parts = [int(p) & 0xF for p in pa_str.split(".")]
+        while len(parts) < 4:
+            parts.append(0)
+        phys_addr = (parts[0] << 12) | (parts[1] << 8) | (parts[2] << 4) | parts[3]
+    except Exception:
+        phys_addr = None
+
+    return {
+        "logical_addr": 5,
+        "phys_addr": phys_addr,
+        "phys_addr_str": pa_str or None,
+        "vendor": block.get("vendor"),
+        "osd": block.get("osd string"),
+    }
+
+
+async def get_system_audio_mode() -> str:
+    """Query the soundbar for System Audio Mode status.
+
+    Returns 'on', 'off', or 'unknown'. 'unknown' means no audio system was
+    reachable or the adapter call failed.
+    """
+    if shutil.which("cec-ctl") is None:
+        return "unknown"
+    lock = _get_lock()
+    async with lock:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "sudo", "-n", "cec-ctl",
+                "--playback", "--osd-name", _CEC_OSD_NAME,
+                "--to", "5", "--give-system-audio-mode-status",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5.0)
+        except Exception as e:
+            log.debug("get_system_audio_mode: %s", e)
+            return "unknown"
+    text = stdout.decode(errors="replace")
+    if "sys-aud-status: on" in text:
+        return "on"
+    if "sys-aud-status: off" in text:
+        return "off"
+    return "unknown"
+
+
+async def request_system_audio_mode(phys_addr: int, enable: bool) -> bool:
+    """Send <System Audio Mode Request> to the TV.
+
+    phys_addr: integer form (e.g. 0x3000 for soundbar at 3.0.0.0). Ignored if
+    enable=False (we send 0xFFFF to disable).
+    Returns True if the message was transmitted OK (regardless of whether the
+    TV honoured or aborted it).
+    """
+    if shutil.which("cec-ctl") is None:
+        return False
+    pa = phys_addr if enable else 0xFFFF
+    pa_arg = f"phys-addr=0x{pa:04x}"
+    lock = _get_lock()
+    async with lock:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "sudo", "-n", "cec-ctl",
+                "--playback", "--osd-name", _CEC_OSD_NAME,
+                "--to", "0", "--system-audio-mode-request", pa_arg,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5.0)
+        except Exception as e:
+            log.warning("request_system_audio_mode failed: %s", e)
+            return False
+    text = stdout.decode(errors="replace")
+    # Transmit outcome is logged as "Tx, OK" — the Rx may still Feature Abort.
+    return "Tx, OK" in text
+
+
+async def ensure_audio_system_preferred(config) -> dict:
+    """Startup helper: if the config toggle is on and an audio system is on
+    the bus, make sure SAM is on (audio routed to soundbar). Best-effort.
+
+    Returns a dict suitable for logging:
+      {"enabled": bool, "audio_system": dict|None, "current": str, "action": str}
+    action is one of: "disabled", "no-audio-system", "already-on",
+    "requested-on", "request-failed".
+    """
+    result: dict = {
+        "enabled": bool(getattr(config.cec, "prefer_audio_system", True)),
+        "audio_system": None,
+        "current": "unknown",
+        "action": "disabled",
+    }
+    if not result["enabled"]:
+        return result
+    audio = await detect_audio_system()
+    result["audio_system"] = audio
+    if not audio:
+        result["action"] = "no-audio-system"
+        return result
+    current = await get_system_audio_mode()
+    result["current"] = current
+    if current == "on":
+        result["action"] = "already-on"
+        return result
+    # Try to enable — Samsung may refuse but we at least try.
+    pa = audio.get("phys_addr") or 0x3000
+    ok = await request_system_audio_mode(pa, enable=True)
+    result["action"] = "requested-on" if ok else "request-failed"
+    return result
