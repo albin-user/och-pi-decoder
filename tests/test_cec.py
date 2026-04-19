@@ -282,21 +282,107 @@ class TestSourceCommands:
 
 
 class TestVolumeCommands:
+    """Volume / mute run via cec-ctl fast path (_key_tap), not cec-client."""
+
+    def setup_method(self):
+        cec._cec_lock = None
 
     @pytest.mark.asyncio
-    async def test_volume_up(self):
-        with patch("pi_decoder.cec._run_cec", new_callable=AsyncMock, return_value="vol up"):
+    async def test_volume_up_default_1_step(self):
+        with patch("pi_decoder.cec._key_tap", new_callable=AsyncMock, return_value=True) as mock_tap:
             result = await cec.volume_up()
-        assert result == "vol up"
+        assert result == {"ok": True, "sent": 1, "dropped": False}
+        mock_tap.assert_called_once_with("volume-up")
+
+    @pytest.mark.asyncio
+    async def test_volume_up_multiple_steps(self):
+        with patch("pi_decoder.cec._key_tap", new_callable=AsyncMock, return_value=True) as mock_tap:
+            result = await cec.volume_up(steps=5)
+        assert result == {"ok": True, "sent": 5, "dropped": False}
+        assert mock_tap.call_count == 5
+
+    @pytest.mark.asyncio
+    async def test_volume_up_clamped_to_max(self):
+        with patch("pi_decoder.cec._key_tap", new_callable=AsyncMock, return_value=True) as mock_tap:
+            await cec.volume_up(steps=999)
+        assert mock_tap.call_count == 20  # safety cap
+
+    @pytest.mark.asyncio
+    async def test_volume_up_clamped_to_min(self):
+        with patch("pi_decoder.cec._key_tap", new_callable=AsyncMock, return_value=True) as mock_tap:
+            result = await cec.volume_up(steps=0)
+        assert result["sent"] == 1
+        assert mock_tap.call_count == 1
 
     @pytest.mark.asyncio
     async def test_volume_down(self):
-        with patch("pi_decoder.cec._run_cec", new_callable=AsyncMock, return_value="vol down"):
-            result = await cec.volume_down()
-        assert result == "vol down"
+        with patch("pi_decoder.cec._key_tap", new_callable=AsyncMock, return_value=True) as mock_tap:
+            result = await cec.volume_down(steps=3)
+        assert result == {"ok": True, "sent": 3, "dropped": False}
+        for call in mock_tap.call_args_list:
+            assert call.args == ("volume-down",)
 
     @pytest.mark.asyncio
     async def test_mute(self):
-        with patch("pi_decoder.cec._run_cec", new_callable=AsyncMock, return_value="muted"):
+        with patch("pi_decoder.cec._key_tap", new_callable=AsyncMock, return_value=True) as mock_tap:
             result = await cec.mute()
-        assert result == "muted"
+        assert result == {"ok": True, "sent": 1, "dropped": False}
+        mock_tap.assert_called_once_with("mute")
+
+    @pytest.mark.asyncio
+    async def test_drops_when_busy(self):
+        """If the adapter lock is held, volume commands drop instead of queueing."""
+        with patch("pi_decoder.cec._is_busy", return_value=True), \
+             patch("pi_decoder.cec._key_tap", new_callable=AsyncMock) as mock_tap:
+            result = await cec.volume_up(steps=3)
+        assert result == {"ok": True, "sent": 0, "dropped": True}
+        mock_tap.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_stops_on_tap_failure(self):
+        """If one tap fails mid-burst, stop and report how many succeeded."""
+        side_effects = [True, True, False, True]  # 3rd fails
+        with patch("pi_decoder.cec._key_tap", new_callable=AsyncMock, side_effect=side_effects) as mock_tap:
+            result = await cec.volume_up(steps=4)
+        assert result["sent"] == 2
+        assert mock_tap.call_count == 3  # stops after failure
+
+
+class TestKeyTap:
+    """Direct tests of the _key_tap + _run_cec_ctl fast-path helpers."""
+
+    def setup_method(self):
+        cec._cec_lock = None
+
+    @pytest.mark.asyncio
+    async def test_key_tap_sends_pressed_then_released(self):
+        ok_proc = AsyncMock()
+        ok_proc.communicate = AsyncMock(return_value=(b"", b""))
+        ok_proc.returncode = 0
+        calls: list[tuple] = []
+
+        async def fake_exec(*args, **kwargs):
+            calls.append(args)
+            return ok_proc
+
+        with patch("pi_decoder.cec.asyncio.create_subprocess_exec", side_effect=fake_exec):
+            ok = await cec._key_tap("volume-up")
+        assert ok is True
+        assert len(calls) == 2
+        assert "--user-control-pressed" in calls[0]
+        assert "ui-cmd=volume-up" in calls[0]
+        assert "--user-control-released" in calls[1]
+
+    @pytest.mark.asyncio
+    async def test_key_tap_unknown_key_raises(self):
+        with pytest.raises(ValueError, match="Unknown key"):
+            await cec._key_tap("bogus")
+
+    @pytest.mark.asyncio
+    async def test_key_tap_returns_false_if_press_fails(self):
+        fail_proc = AsyncMock()
+        fail_proc.communicate = AsyncMock(return_value=(b"", b"err"))
+        fail_proc.returncode = 1
+        with patch("pi_decoder.cec.asyncio.create_subprocess_exec", return_value=fail_proc):
+            ok = await cec._key_tap("volume-up")
+        assert ok is False

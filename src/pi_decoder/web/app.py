@@ -567,6 +567,32 @@ def create_app(
         subprocess.Popen(["sudo", "/sbin/poweroff"])
         return {"ok": True, "message": "System shutting down"}
 
+    @app.post("/api/system/kiosk-shutdown")
+    async def api_system_kiosk_shutdown():
+        """Graceful kiosk shutdown: TV to standby, brief wait, Pi poweroff.
+
+        For Bitfocus Companion's 'off' button: single call that takes the
+        whole kiosk down cleanly before the Shelly plug cuts Pi mains.
+        Returns immediately; the poweroff runs in the background so the
+        caller can wait for the Pi to become unreachable (that's the cue
+        to cut the plug).
+        """
+        from pi_decoder import cec
+        try:
+            await cec.standby()
+        except Exception as e:
+            log.warning("Kiosk shutdown: CEC standby failed (continuing): %s", e)
+
+        async def _poweroff_after_delay():
+            try:
+                await asyncio.sleep(1.5)
+                subprocess.Popen(["sudo", "/sbin/poweroff"])
+            except Exception as e:
+                log.error("Kiosk shutdown poweroff failed: %s", e)
+
+        asyncio.create_task(_poweroff_after_delay())
+        return {"ok": True, "message": "TV standby sent; Pi powering off in ~1.5s"}
+
     # ── Config backup/restore ─────────────────────────────────────
 
     @app.get("/api/config/export")
@@ -852,32 +878,53 @@ def create_app(
             return JSONResponse({"ok": False, "error": f"CEC set input failed: {e}"}, 500)
         return {"ok": True}
 
+    async def _parse_steps(request: Request) -> int:
+        """Pull 'steps' from JSON body or query string. Default 1, clamp 1..20."""
+        steps = 1
+        try:
+            ct = request.headers.get("content-type", "")
+            if "json" in ct:
+                data = await request.json()
+                if isinstance(data, dict) and "steps" in data:
+                    steps = int(data["steps"])
+        except Exception:
+            pass
+        q_steps = request.query_params.get("steps")
+        if q_steps is not None:
+            try:
+                steps = int(q_steps)
+            except (ValueError, TypeError):
+                pass
+        return max(1, min(20, steps))
+
     @app.post("/api/cec/volume-up")
-    async def api_cec_volume_up():
+    async def api_cec_volume_up(request: Request):
+        steps = await _parse_steps(request)
         try:
             from pi_decoder import cec
-            await cec.volume_up()
+            result = await cec.volume_up(steps=steps)
         except Exception as e:
             return JSONResponse({"ok": False, "error": f"CEC volume up failed: {e}"}, 500)
-        return {"ok": True}
+        return {"ok": True, **result}
 
     @app.post("/api/cec/volume-down")
-    async def api_cec_volume_down():
+    async def api_cec_volume_down(request: Request):
+        steps = await _parse_steps(request)
         try:
             from pi_decoder import cec
-            await cec.volume_down()
+            result = await cec.volume_down(steps=steps)
         except Exception as e:
             return JSONResponse({"ok": False, "error": f"CEC volume down failed: {e}"}, 500)
-        return {"ok": True}
+        return {"ok": True, **result}
 
     @app.post("/api/cec/mute")
     async def api_cec_mute():
         try:
             from pi_decoder import cec
-            await cec.mute()
+            result = await cec.mute()
         except Exception as e:
             return JSONResponse({"ok": False, "error": f"CEC mute failed: {e}"}, 500)
-        return {"ok": True}
+        return {"ok": True, **result}
 
     # ── Display / HDMI resolution ─────────────────────────────────────
 

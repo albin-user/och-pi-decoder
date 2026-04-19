@@ -309,19 +309,41 @@ class TestCecEndpoints:
         assert resp.status_code == 200
         assert resp.json()["ok"] is True
 
-    @patch("pi_decoder.cec.volume_up", new_callable=AsyncMock, return_value="ok")
-    def test_cec_volume_up(self, _mock, client):
+    @patch("pi_decoder.cec.volume_up", new_callable=AsyncMock,
+           return_value={"ok": True, "sent": 1, "dropped": False})
+    def test_cec_volume_up(self, mock_vol, client):
         resp = client.post("/api/cec/volume-up")
         assert resp.status_code == 200
-        assert resp.json()["ok"] is True
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["sent"] == 1
+        mock_vol.assert_awaited_once_with(steps=1)
 
-    @patch("pi_decoder.cec.volume_down", new_callable=AsyncMock, return_value="ok")
+    @patch("pi_decoder.cec.volume_up", new_callable=AsyncMock,
+           return_value={"ok": True, "sent": 5, "dropped": False})
+    def test_cec_volume_up_with_steps(self, mock_vol, client):
+        resp = client.post("/api/cec/volume-up", json={"steps": 5})
+        assert resp.status_code == 200
+        assert resp.json()["sent"] == 5
+        mock_vol.assert_awaited_once_with(steps=5)
+
+    @patch("pi_decoder.cec.volume_up", new_callable=AsyncMock,
+           return_value={"ok": True, "sent": 0, "dropped": True})
+    def test_cec_volume_up_dropped(self, _mock, client):
+        """Drop-if-busy: response still 200 but dropped:True."""
+        resp = client.post("/api/cec/volume-up")
+        assert resp.status_code == 200
+        assert resp.json()["dropped"] is True
+
+    @patch("pi_decoder.cec.volume_down", new_callable=AsyncMock,
+           return_value={"ok": True, "sent": 1, "dropped": False})
     def test_cec_volume_down(self, _mock, client):
         resp = client.post("/api/cec/volume-down")
         assert resp.status_code == 200
         assert resp.json()["ok"] is True
 
-    @patch("pi_decoder.cec.mute", new_callable=AsyncMock, return_value="ok")
+    @patch("pi_decoder.cec.mute", new_callable=AsyncMock,
+           return_value={"ok": True, "sent": 1, "dropped": False})
     def test_cec_mute(self, _mock, client):
         resp = client.post("/api/cec/mute")
         assert resp.status_code == 200
@@ -787,6 +809,23 @@ class TestRebootShutdown:
     @patch("subprocess.Popen")
     def test_shutdown(self, _mock_popen, client):
         resp = client.post("/api/shutdown")
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+
+    @patch("subprocess.Popen")
+    @patch("pi_decoder.cec.standby", new_callable=AsyncMock, return_value="standby ok")
+    def test_kiosk_shutdown_sends_standby_and_poweroff(self, mock_standby, _mock_popen, client):
+        """Kiosk shutdown: CEC standby first, then poweroff."""
+        resp = client.post("/api/system/kiosk-shutdown")
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+        mock_standby.assert_awaited_once()
+
+    @patch("subprocess.Popen")
+    @patch("pi_decoder.cec.standby", new_callable=AsyncMock, side_effect=Exception("CEC down"))
+    def test_kiosk_shutdown_continues_if_cec_fails(self, _mock_standby, _mock_popen, client):
+        """If TV is already unreachable via CEC, still proceed with Pi poweroff."""
+        resp = client.post("/api/system/kiosk-shutdown")
         assert resp.status_code == 200
         assert resp.json()["ok"] is True
 

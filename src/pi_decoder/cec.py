@@ -171,18 +171,107 @@ async def set_input(port: int) -> str:
     return output
 
 
-# ── Volume ────────────────────────────────────────────────────────
+# ── Volume / Keypress (fast path via cec-ctl) ─────────────────────
+#
+# Volume control uses cec-ctl instead of cec-client because each cec-client
+# invocation takes ~3-5s (libcec does its own CEC bus init), while cec-ctl
+# talks directly to the already-configured kernel adapter at ~10-500ms.
+# The fast path matters when Bitfocus Companion or a remote hammers vol+/-.
 
-async def volume_up() -> str:
-    output = await _run_cec("volup 0")
-    return output
+# Maps friendly names to cec-ctl --ui-cmd values. Volume commands go to TV
+# (logical address 0) — Samsung Anynet+ forwards them to the soundbar.
+_UI_KEYS: dict[str, str] = {
+    "volume-up": "volume-up",
+    "volume-down": "volume-down",
+    "mute": "mute",
+}
+
+_KEY_TIMEOUT = 3.0  # seconds per cec-ctl invocation
+_TAP_GAP = 0.05     # seconds between press and release for a single tap
 
 
-async def volume_down() -> str:
-    output = await _run_cec("voldown 0")
-    return output
+async def _run_cec_ctl(*args: str) -> bool:
+    """Run `sudo -n cec-ctl <args>`. Fast path for keypress/release."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "sudo", "-n", "cec-ctl", *args,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=_KEY_TIMEOUT)
+        if proc.returncode != 0:
+            log.debug("cec-ctl %s -> rc=%d: %s",
+                      args, proc.returncode, stderr.decode(errors="replace").strip()[:120])
+            return False
+        return True
+    except asyncio.TimeoutError:
+        log.warning("cec-ctl %s timed out", args)
+        return False
+    except Exception as e:
+        log.warning("cec-ctl %s error: %s", args, e)
+        return False
 
 
-async def mute() -> str:
-    output = await _run_cec("mute 0")
-    return output
+async def _key_tap(key: str) -> bool:
+    """Send a single <User Control Pressed> + <Released> for `key` to the TV.
+
+    Returns True if the press was sent (release is best-effort). Holds _cec_lock
+    briefly to prevent collisions with slow cec-client calls.
+    """
+    if key not in _UI_KEYS:
+        raise ValueError(f"Unknown key: {key!r}")
+    ui_cmd = _UI_KEYS[key]
+    lock = _get_lock()
+    async with lock:
+        ok = await _run_cec_ctl("--to", "0", "--user-control-pressed", f"ui-cmd={ui_cmd}")
+        if not ok:
+            return False
+        await asyncio.sleep(_TAP_GAP)
+        await _run_cec_ctl("--to", "0", "--user-control-released")
+    return True
+
+
+def _is_busy() -> bool:
+    """True if the CEC adapter is currently held by another coroutine."""
+    lock = _get_lock()
+    return lock.locked()
+
+
+async def volume_up(steps: int = 1) -> dict:
+    """Press Volume Up `steps` times. Drops if the adapter is busy.
+
+    Returns {"ok": bool, "sent": int, "dropped": bool}.
+    """
+    return await _repeat_tap("volume-up", steps)
+
+
+async def volume_down(steps: int = 1) -> dict:
+    """Press Volume Down `steps` times. Drops if the adapter is busy."""
+    return await _repeat_tap("volume-down", steps)
+
+
+async def mute() -> dict:
+    """Toggle mute. Drops if the adapter is busy."""
+    return await _repeat_tap("mute", 1)
+
+
+async def _repeat_tap(key: str, steps: int) -> dict:
+    """Run N taps back-to-back under the adapter lock. Drops if already busy.
+
+    The goal is 'fire now or drop' — if another CEC call is in flight, we do
+    NOT queue (which would keep increasing volume long after the user stopped
+    clicking). Subsequent calls from the same user after the burst will get
+    through once the adapter is free.
+    """
+    if steps < 1:
+        steps = 1
+    if steps > 20:
+        steps = 20  # safety cap
+    if _is_busy():
+        return {"ok": True, "sent": 0, "dropped": True}
+    sent = 0
+    for _ in range(steps):
+        if not await _key_tap(key):
+            break
+        sent += 1
+    return {"ok": sent > 0, "sent": sent, "dropped": False}
