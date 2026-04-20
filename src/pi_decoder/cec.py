@@ -291,28 +291,36 @@ async def _repeat_tap(key: str, steps: int) -> dict:
 # of hardcoding, so moving the soundbar between TV HDMI ports still works.
 
 
-async def detect_audio_system(timeout: float = 8.0) -> dict | None:
+async def detect_audio_system(timeout: float = 15.0) -> dict | None:
     """Scan the CEC bus and return info about an Audio System (LA 5), or None.
 
     Returns a dict with keys: {"logical_addr", "phys_addr", "vendor", "osd"}.
     phys_addr is the integer form (e.g. 0x3000 for "3.0.0.0").
     """
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "cec-client", "-s", "-d", "1", "-o", _CEC_OSD_NAME,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        lock = _get_lock()
-        async with lock:
+    lock = _get_lock()
+    async with lock:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "cec-client", "-s", "-d", "1", "-o", _CEC_OSD_NAME,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
             stdout, _ = await asyncio.wait_for(
-                proc.communicate(input=b"scan\n"),
+                proc.communicate(input=b"scan"),
                 timeout=timeout,
             )
-    except Exception as e:
-        log.debug("detect_audio_system: scan failed: %s", e)
-        return None
+        except asyncio.TimeoutError:
+            log.warning("detect_audio_system: cec-client scan timed out after %ss", timeout)
+            try:
+                proc.kill()
+                await proc.wait()
+            except Exception:
+                pass
+            return None
+        except Exception as e:
+            log.warning("detect_audio_system: scan failed: %r", e)
+            return None
 
     text = stdout.decode(errors="replace")
     # Walk the scan output looking for "device #5: Audio" block
