@@ -363,6 +363,14 @@ class TestCecEndpoints:
         assert data["ok"] is True
         assert data["status"] == "on"
 
+    @patch("pi_decoder.cec.toggle", new_callable=AsyncMock, return_value="on")
+    def test_cec_toggle(self, _mock, client):
+        resp = client.post("/api/cec/toggle")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert data["action"] == "on"
+
 
 class TestCecAudioOutput:
     """GET /api/cec/audio-output and POST /api/cec/prefer-audio-system."""
