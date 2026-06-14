@@ -7,16 +7,21 @@ through pi-decoder's existing HTTP REST API over the LAN.
 
 A battery BLU Wall Switch 4 (Bluetooth) talks to a mains-powered Gen3 Shelly
 that has BLE — here the **Plug M Gen3** — which acts as the BLE gateway and runs
-the script. Each button press is turned into a direct HTTP call to the Pi:
+the script. Each button press is turned into a direct HTTP call to the Pi.
 
-| Button | Action            | Pi endpoint            |
-|--------|-------------------|------------------------|
-| 1      | Toggle TV on/off  | `POST /api/cec/toggle` |
-| 2      | Volume up         | `POST /api/cec/volume-up` |
-| 3      | Switch to PC HDMI | `POST /api/cec/input` `{port}` |
-| 4      | Volume down       | `POST /api/cec/volume-down` |
+Current mapping (button `idx` → action, as set in `ACTION_BY_IDX`):
+
+| `idx` | Action            | Pi endpoint                    |
+|-------|-------------------|--------------------------------|
+| 0     | Toggle TV on/off  | `POST /api/cec/toggle`         |
+| 1     | Switch to PC HDMI | `POST /api/cec/input` `{port}` |
+| 2     | Volume up         | `POST /api/cec/volume-up`      |
+| 3     | Volume down       | `POST /api/cec/volume-down`    |
 
 No MQTT broker and no Companion in the path — the plug calls the Pi directly.
+pi-decoder has no MQTT support, but it already exposes a full CEC REST API, so
+direct HTTP is the fewest moving parts. (`/api/cec/toggle` was the one endpoint
+added for this — everything else already existed.)
 
 ### Why no encryption handling in the script
 
@@ -29,12 +34,19 @@ listens for those events with `Shelly.addEventHandler` — it never sees the key
 or the raw BLE payload.
 
 All four buttons arrive on a **single** component (e.g. `bthomedevice:200`); the
-event's **`idx`** field (0–3) identifies which button was pressed. The script
-keys actions on `idx`, e.g.:
+event's **`idx`** field (0–3) identifies which button was pressed (there is *not*
+a separate `bthomesensor` component per button). The script keys actions on
+`idx`, e.g.:
 
 ```
 Event from bthomedevice:200: {"event":"single_push","idx":2, ...}
 ```
+
+Confirmed against this device's log: each event `idx` lines up with the
+`button:N` field that fires in the raw `BTHomeData` line — `idx:0`↔`button:0`,
+`idx:1`↔`button:1`, `idx:2`↔`button:2`, `idx:3`↔`button:3`. So `idx` is simply
+the button index. (In the raw advert, `button:N=128` is the press-down phase and
+`button:N=1` is the single-press the firmware turns into `single_push`.)
 
 ### Setup
 
@@ -56,9 +68,11 @@ Event from bthomedevice:200: {"event":"single_push","idx":2, ...}
 
 ### Notes
 
-- Button 1 calls `/api/cec/toggle`, which reads TV power state on the Pi and
-  flips it in one call (added to pi-decoder for this). If power state can't be
-  read it defaults to powering on.
+- **Pi dependency**: the toggle button calls `/api/cec/toggle`, which is new
+  (`cec.toggle()` in `src/pi_decoder/cec.py` + the route in `web/app.py`). The
+  updated pi-decoder must be deployed to the Pi or that button returns 404; the
+  other three work against any existing build. `toggle` reads TV power state and
+  flips it in one call, treating an unreadable state as "off" (powers on).
 - The switch also emits `double_push` / `triple_push` / `long_push`. The script
   only acts on `TRIGGER_EVENT` (default `single_push`); extend `doAction` if you
   want extra functions on the same buttons.
