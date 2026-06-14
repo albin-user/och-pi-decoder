@@ -15,16 +15,21 @@
 //   Button 4 -> volume down          POST /api/cec/volume-down
 //
 // SETUP — three things to fill in below:
-//   1. PI_HOST            the Pi's address on the LAN.
-//   2. PC_HDMI_PORT       which TV HDMI input the PC is on (1-4).
-//   3. BUTTON_COMPONENTS  the bthomesensor:<id> for each physical button.
+//   1. PI_HOST       the Pi's address on the LAN.
+//   2. PC_HDMI_PORT  which TV HDMI input the PC is on (1-4).
+//   3. ACTION_BY_IDX which button index does what (verify with the log).
 //
-// Finding the component ids (step 3): install + start this script, open the
-// script log (Debug -> Console, or the embedded web UI log), then press each
-// button once. Every BLU event is printed like:
-//     BLU event: bthomesensor:201  single_push
-// Note which id fires for buttons 1..4 and put them in BUTTON_COMPONENTS.
-// (The battery is a separate bthomesensor id — ignore that one.)
+// How this device reports buttons: the BLU Wall Switch 4 shows up as ONE
+// component (e.g. bthomedevice:200), and each press carries an `idx` field
+// (0-3) identifying the physical button — there is NOT a separate component
+// per button. So we key actions on `idx`, not on the component id.
+//
+// Finding which idx is which physical button (step 3): install + start this
+// script, open the log (Debug -> Console, or the embedded web UI log), and
+// press each button once. Every press prints:
+//     BLU event: idx 2  single_push
+// Note which idx maps to the physical button you want for each action and set
+// ACTION_BY_IDX accordingly.
 // ─────────────────────────────────────────────────────────────────────────
 
 let CONFIG = {
@@ -33,17 +38,24 @@ let CONFIG = {
   //    DNS issues from the plug.
   PI_HOST: "http://192.168.1.50",
 
-  // 2. TV HDMI input the PC is plugged into (1-4). Button 3 switches to it.
+  // 2. TV HDMI input the PC is plugged into (1-4). Switches to it.
   PC_HDMI_PORT: 2,
 
-  // 3. Physical button -> bthomesensor component id. Fill these in after
-  //    discovering them from the log (see header). Values are the numeric id.
-  BUTTON_COMPONENTS: {
-    button1: 200, // toggle power
-    button2: 201, // volume up
-    button3: 202, // source -> PC
-    button4: 203, // volume down
+  // 3. Button index (idx 0-3 from the event) -> action. Defaults assume
+  //    idx 0=button1 .. idx 3=button4; confirm with the log and reorder if
+  //    your physical layout differs. Valid actions: "toggle", "volume_up",
+  //    "volume_down", "source_pc".
+  ACTION_BY_IDX: {
+    0: "toggle",       // toggle TV power
+    1: "volume_up",    // volume up
+    2: "source_pc",    // switch to PC HDMI
+    3: "volume_down",  // volume down
   },
+
+  // Component id of the BLU switch on this plug. If you only have one BLU
+  // device it's almost always bthomedevice:200. Set null to accept any
+  // bthomedevice (fine unless you pair more than one BLU device here).
+  BLU_COMPONENT: "bthomedevice:200",
 
   // Which press type triggers an action. The BLU also emits double_push,
   // triple_push and long_push — keep to single_push for plain taps.
@@ -55,13 +67,6 @@ let CONFIG = {
   // HTTP timeout (seconds) for calls to the Pi.
   HTTP_TIMEOUT: 5,
 };
-
-// Build id -> action lookup once, so the event handler is a simple map read.
-let ACTION_BY_ID = {};
-ACTION_BY_ID[CONFIG.BUTTON_COMPONENTS.button1] = "toggle";
-ACTION_BY_ID[CONFIG.BUTTON_COMPONENTS.button2] = "volume_up";
-ACTION_BY_ID[CONFIG.BUTTON_COMPONENTS.button3] = "source_pc";
-ACTION_BY_ID[CONFIG.BUTTON_COMPONENTS.button4] = "volume_down";
 
 function postPi(path, bodyObj) {
   Shelly.call(
@@ -98,27 +103,32 @@ function doAction(action) {
 
 // The firmware delivers decoded BLU button presses as component events.
 // Event shape (from the device log):
-//   { component: "bthomesensor:201", id: 201,
-//     info: { component: "bthomesensor:201", id: 201, event: "single_push" } }
+//   { component: "bthomedevice:200", id: 200,
+//     info: { component: "bthomedevice:200", id: 200,
+//             event: "single_push", idx: 2, channel: -1 } }
+// All four buttons share one component; `idx` (0-3) picks the button.
 Shelly.addEventHandler(function (e) {
   if (!e || !e.info) return;
 
   let comp = e.component || e.info.component;
-  if (!comp || comp.indexOf("bthomesensor:") !== 0) return;
+  if (!comp || comp.indexOf("bthomedevice:") !== 0) return;
+  if (CONFIG.BLU_COMPONENT !== null && comp !== CONFIG.BLU_COMPONENT) return;
 
   let evt = e.info.event;
-  if (!evt) return; // bthomesensor also emits value updates with no `event`
+  if (!evt) return; // status updates with no `event` — ignore
 
-  let id = e.id !== undefined ? e.id : e.info.id;
-  print("BLU event:", comp, evt); // keep for discovery / debugging
+  let idx = e.info.idx;
+  if (idx === undefined || idx === null) return;
+
+  print("BLU event: idx", idx, evt); // keep for discovery / debugging
 
   if (evt !== CONFIG.TRIGGER_EVENT) return;
 
-  let action = ACTION_BY_ID[id];
+  let action = CONFIG.ACTION_BY_IDX[idx];
   if (action) {
     doAction(action);
   } else {
-    print("No mapping for", comp, "- add id", id, "to BUTTON_COMPONENTS");
+    print("No action mapped for idx", idx, "- add it to ACTION_BY_IDX");
   }
 });
 

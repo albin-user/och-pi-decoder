@@ -24,10 +24,17 @@ The BLU Wall Switch 4 advertises **encrypted** BTHome data. You do **not**
 decrypt it in the script. Instead you add the switch to the Plug M as a BTHome
 **component** and paste its key (from the Shelly **Debug** app) into the
 component's encryption-key box. The firmware then decrypts every advertisement
-and re-emits each button press as a normal component **event**
-(`bthomesensor:<id>` → `single_push` / `double_push` / `long_push`). The script
-just listens for those events with `Shelly.addEventHandler` — it never sees the
-key or the raw BLE payload.
+and re-emits each button press as a normal component **event**. The script just
+listens for those events with `Shelly.addEventHandler` — it never sees the key
+or the raw BLE payload.
+
+All four buttons arrive on a **single** component (e.g. `bthomedevice:200`); the
+event's **`idx`** field (0–3) identifies which button was pressed. The script
+keys actions on `idx`, e.g.:
+
+```
+Event from bthomedevice:200: {"event":"single_push","idx":2, ...}
+```
 
 ### Setup
 
@@ -39,11 +46,12 @@ key or the raw BLE payload.
    - `PI_HOST` — the Pi's LAN address, e.g. `http://192.168.1.50` (port 80 is
      the pi-decoder default, so no port needed).
    - `PC_HDMI_PORT` — which TV HDMI input the PC is on (1-4).
-   - `BUTTON_COMPONENTS` — the `bthomesensor` id for each physical button.
-3. **Discover the button ids**: start the script, open its log/console, and
-   press each button once. Each press prints e.g. `BLU event: bthomesensor:201
-   single_push`. Note which id maps to buttons 1–4 and fill in
-   `BUTTON_COMPONENTS` (the battery is a separate id — ignore it). Save.
+   - `ACTION_BY_IDX` — which button index (0–3) does what.
+   - `BLU_COMPONENT` — the switch's component id (usually `bthomedevice:200`).
+3. **Confirm which idx is which physical button**: start the script, open its
+   log/console, and press each button once. Each press prints e.g.
+   `BLU event: idx 2 single_push`. Note which idx maps to the physical button
+   you want for each action and set `ACTION_BY_IDX` accordingly. Save.
 4. Enable **Run on startup** so it survives a reboot.
 
 ### Notes
