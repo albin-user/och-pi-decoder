@@ -47,8 +47,8 @@ let CONFIG = {
   //    "volume_down", "source_pc".
   ACTION_BY_IDX: {
     0: "toggle",       // toggle TV power
-    1: "volume_up",    // volume up
-    2: "source_pc",    // switch to PC HDMI
+    2: "volume_up",    // volume up
+    1: "source_pc",    // switch to PC HDMI
     3: "volume_down",  // volume down
   },
 
