@@ -853,6 +853,20 @@ def create_app(
             return JSONResponse({"ok": False, "error": f"CEC status check failed: {e}"}, 500)
         return {"ok": True, "status": status}
 
+    @app.post("/api/cec/toggle")
+    async def api_cec_toggle():
+        """Toggle TV power. Returns the action taken ('on' or 'standby').
+
+        Used by the Shelly BLU Wall Switch so a single button flips power
+        without the caller having to read status first.
+        """
+        try:
+            from pi_decoder import cec
+            action = await cec.toggle()
+        except Exception as e:
+            return JSONResponse({"ok": False, "error": f"CEC toggle failed: {e}"}, 500)
+        return {"ok": True, "action": action}
+
     @app.post("/api/cec/active-source")
     async def api_cec_active_source():
         try:

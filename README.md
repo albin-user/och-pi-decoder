@@ -22,6 +22,7 @@ A Raspberry Pi-based video decoder with Planning Center Online (PCO) countdown o
 | [DOCUMENTATION.md](DOCUMENTATION.md) | Full deployment guide and troubleshooting |
 | [STREAM_RESILIENCE_IMPLEMENTATION.md](STREAM_RESILIENCE_IMPLEMENTATION.md) | Stream auto-retry feature details |
 | [deploy/README.md](deploy/README.md) | Quick deployment steps |
+| [integrations/](integrations/) | Companion code for accessories that drive the Pi (e.g. Shelly BLU wall switch). Runs on other devices, not the Pi. |
 
 ---
 

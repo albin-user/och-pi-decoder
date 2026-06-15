@@ -114,6 +114,42 @@ class TestPowerCommands:
         assert "standby sent" in result
 
     @pytest.mark.asyncio
+    async def test_toggle_on_when_off(self):
+        """toggle() powers on when the TV is in standby."""
+        with patch("pi_decoder.cec.get_power_status", new_callable=AsyncMock,
+                   return_value="standby"), \
+             patch("pi_decoder.cec.power_on", new_callable=AsyncMock) as p_on, \
+             patch("pi_decoder.cec.standby", new_callable=AsyncMock) as p_sb:
+            result = await cec.toggle()
+        assert result == "on"
+        p_on.assert_awaited_once()
+        p_sb.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_toggle_standby_when_on(self):
+        """toggle() puts the TV in standby when it is on."""
+        with patch("pi_decoder.cec.get_power_status", new_callable=AsyncMock,
+                   return_value="on"), \
+             patch("pi_decoder.cec.power_on", new_callable=AsyncMock) as p_on, \
+             patch("pi_decoder.cec.standby", new_callable=AsyncMock) as p_sb:
+            result = await cec.toggle()
+        assert result == "standby"
+        p_sb.assert_awaited_once()
+        p_on.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_toggle_unknown_powers_on(self):
+        """toggle() treats 'unknown' as off and powers on."""
+        with patch("pi_decoder.cec.get_power_status", new_callable=AsyncMock,
+                   return_value="unknown"), \
+             patch("pi_decoder.cec.power_on", new_callable=AsyncMock) as p_on, \
+             patch("pi_decoder.cec.standby", new_callable=AsyncMock) as p_sb:
+            result = await cec.toggle()
+        assert result == "on"
+        p_on.assert_awaited_once()
+        p_sb.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_get_power_status_on(self):
         with patch("pi_decoder.cec._run_cec", new_callable=AsyncMock,
                     return_value="power status: on\n"):

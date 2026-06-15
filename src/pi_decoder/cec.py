@@ -153,6 +153,22 @@ async def get_power_status() -> str:
     return _power_cache
 
 
+async def toggle() -> str:
+    """Toggle TV power based on current status.
+
+    Returns the action taken: 'on' if the TV was turned on, 'standby' if it
+    was put to standby. Treats 'unknown' as off and powers on, so a single
+    button keeps working even when the bus can't report state. power_on() and
+    standby() invalidate the status cache, so back-to-back presses stay in sync.
+    """
+    status = await get_power_status()
+    if status == "on":
+        await standby()
+        return "standby"
+    await power_on()
+    return "on"
+
+
 # ── Source / Input ────────────────────────────────────────────────
 
 async def active_source() -> str:
