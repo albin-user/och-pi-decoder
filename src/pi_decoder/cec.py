@@ -189,13 +189,23 @@ async def set_input(port: int) -> str:
 
 # ── Volume / Keypress (fast path via cec-ctl) ─────────────────────
 #
-# Volume control uses cec-ctl instead of cec-client because each cec-client
-# invocation takes ~3-5s (libcec does its own CEC bus init), while cec-ctl
-# talks directly to the already-configured kernel adapter at ~10-500ms.
-# The fast path matters when Bitfocus Companion or a remote hammers vol+/-.
+# Volume is sent to the AUDIO SYSTEM (logical address 5), NOT the TV. On this
+# rig (Samsung TV + Sony HT-SF150 soundbar) the soundbar only honours CEC
+# volume once it has been put into *System Audio Mode*, and only from a
+# *registered* initiator. Sending volume key-presses to the TV (LA 0), or from
+# an unregistered adapter, is silently ignored. So each burst:
+#   1. registers the adapter as a Playback device — cec-ctl is "Unregistered"
+#      by default, and any cec-client scan (e.g. audio detection) wipes a prior
+#      registration, so we re-assert it every time;
+#   2. sends <System Audio Mode Request> to LA 5 (idempotent; soundbar stays on);
+#   3. sends the volume key-presses to LA 5.
+# cec-ctl (~10-500ms) is used instead of cec-client (~3-5s bus init) so the wall
+# switch / Companion stay responsive.
 
-# Maps friendly names to cec-ctl --ui-cmd values. Volume commands go to TV
-# (logical address 0) — Samsung Anynet+ forwards them to the soundbar.
+_AUDIO_LA = "5"                  # CEC logical address of the audio system
+_DEFAULT_PHYS_ADDR = "2.0.0.0"   # Pi's HDMI physical address (fallback only)
+
+# cec-ctl --ui-cmd values for each key.
 _UI_KEYS: dict[str, str] = {
     "volume-up": "volume-up",
     "volume-down": "volume-down",
@@ -228,23 +238,65 @@ async def _run_cec_ctl(*args: str) -> bool:
         return False
 
 
-async def _key_tap(key: str) -> bool:
-    """Send a single <User Control Pressed> + <Released> for `key` to the TV.
+async def _register_playback() -> str:
+    """Register the adapter as a Playback device; return its physical address.
 
-    Returns True if the press was sent (release is best-effort). Holds _cec_lock
-    briefly to prevent collisions with slow cec-client calls.
+    cec-ctl runs "Unregistered" by default and volume key-presses from an
+    unregistered initiator are ignored. Registering as Playback (LA 4) is cheap
+    and re-establishes the LA after a cec-client scan (audio detection) has
+    cleared it. The physical address is parsed from the same call so the System
+    Audio Mode request can name the Pi as the audio source.
+    """
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "sudo", "-n", "cec-ctl", "--playback", "--osd-name", _CEC_OSD_NAME,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=_KEY_TIMEOUT)
+    except Exception as e:
+        log.warning("cec-ctl --playback failed: %s", e)
+        return _DEFAULT_PHYS_ADDR
+    for line in stdout.decode(errors="replace").splitlines():
+        if "Physical Address" in line:
+            pa = line.split(":", 1)[1].strip()
+            if pa[:1].isdigit():
+                return pa
+    return _DEFAULT_PHYS_ADDR
+
+
+async def _audio_key_burst(key: str, steps: int) -> dict:
+    """Send `steps` volume key-presses to the audio system (LA 5).
+
+    Registers as Playback, enables System Audio Mode, then taps — see the module
+    comment above for why all three are needed. 'Fire now or drop': if another
+    CEC call is in flight we drop rather than queue, so a held button can't keep
+    changing volume after the user stops. Returns {"ok", "sent", "dropped"}.
     """
     if key not in _UI_KEYS:
         raise ValueError(f"Unknown key: {key!r}")
+    if steps < 1:
+        steps = 1
+    if steps > 20:
+        steps = 20  # safety cap
+    if _is_busy():
+        return {"ok": True, "sent": 0, "dropped": True}
     ui_cmd = _UI_KEYS[key]
     lock = _get_lock()
     async with lock:
-        ok = await _run_cec_ctl("--to", "0", "--user-control-pressed", f"ui-cmd={ui_cmd}")
-        if not ok:
-            return False
-        await asyncio.sleep(_TAP_GAP)
-        await _run_cec_ctl("--to", "0", "--user-control-released")
-    return True
+        phys = await _register_playback()
+        # Put the soundbar into System Audio Mode (idempotent; it stays on).
+        await _run_cec_ctl("--to", _AUDIO_LA, "--system-audio-mode-request",
+                           f"phys-addr={phys}")
+        sent = 0
+        for _ in range(steps):
+            if not await _run_cec_ctl("--to", _AUDIO_LA,
+                                      "--user-control-pressed", f"ui-cmd={ui_cmd}"):
+                break
+            await asyncio.sleep(_TAP_GAP)
+            await _run_cec_ctl("--to", _AUDIO_LA, "--user-control-released")
+            sent += 1
+    return {"ok": sent > 0, "sent": sent, "dropped": False}
 
 
 def _is_busy() -> bool:
@@ -254,43 +306,21 @@ def _is_busy() -> bool:
 
 
 async def volume_up(steps: int = 1) -> dict:
-    """Press Volume Up `steps` times. Drops if the adapter is busy.
+    """Raise volume `steps` times via the soundbar. Drops if the adapter is busy.
 
     Returns {"ok": bool, "sent": int, "dropped": bool}.
     """
-    return await _repeat_tap("volume-up", steps)
+    return await _audio_key_burst("volume-up", steps)
 
 
 async def volume_down(steps: int = 1) -> dict:
-    """Press Volume Down `steps` times. Drops if the adapter is busy."""
-    return await _repeat_tap("volume-down", steps)
+    """Lower volume `steps` times via the soundbar. Drops if the adapter is busy."""
+    return await _audio_key_burst("volume-down", steps)
 
 
 async def mute() -> dict:
-    """Toggle mute. Drops if the adapter is busy."""
-    return await _repeat_tap("mute", 1)
-
-
-async def _repeat_tap(key: str, steps: int) -> dict:
-    """Run N taps back-to-back under the adapter lock. Drops if already busy.
-
-    The goal is 'fire now or drop' — if another CEC call is in flight, we do
-    NOT queue (which would keep increasing volume long after the user stopped
-    clicking). Subsequent calls from the same user after the burst will get
-    through once the adapter is free.
-    """
-    if steps < 1:
-        steps = 1
-    if steps > 20:
-        steps = 20  # safety cap
-    if _is_busy():
-        return {"ok": True, "sent": 0, "dropped": True}
-    sent = 0
-    for _ in range(steps):
-        if not await _key_tap(key):
-            break
-        sent += 1
-    return {"ok": sent > 0, "sent": sent, "dropped": False}
+    """Toggle mute on the soundbar. Drops if the adapter is busy."""
+    return await _audio_key_burst("mute", 1)
 
 
 # ── Audio System Detection & Routing ───────────────────────────────
