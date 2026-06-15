@@ -11,12 +11,16 @@ the script. Each button press is turned into a direct HTTP call to the Pi.
 
 Current mapping (button `idx` → action, as set in `ACTION_BY_IDX`):
 
-| `idx` | Action            | Pi endpoint                    |
-|-------|-------------------|--------------------------------|
-| 0     | Toggle TV on/off  | `POST /api/cec/toggle`         |
-| 1     | Switch to PC HDMI | `POST /api/cec/input` `{port}` |
-| 2     | Volume up         | `POST /api/cec/volume-up`      |
-| 3     | Volume down       | `POST /api/cec/volume-down`    |
+| `idx` | Action               | Pi endpoint                   |
+|-------|----------------------|-------------------------------|
+| 0     | Toggle TV on/off     | `POST /api/cec/toggle`        |
+| 1     | Switch to Pi/decoder | `POST /api/cec/active-source` |
+| 2     | Volume up            | `POST /api/cec/volume-up`     |
+| 3     | Volume down          | `POST /api/cec/volume-down`   |
+
+The "source" button uses `active-source` (makes the Pi the CEC active source —
+the decoder video you normally watch) rather than forcing a fixed HDMI port, so
+it keeps working even if the Pi moves to a different TV input.
 
 No MQTT broker and no Companion in the path — the plug calls the Pi directly.
 pi-decoder has no MQTT support, but it already exposes a full CEC REST API, so
@@ -57,7 +61,6 @@ the button index. (In the raw advert, `button:N=128` is the press-down phase and
    `blu-wall-switch-4.js`, and edit the `CONFIG` block:
    - `PI_HOST` — the Pi's LAN address, e.g. `http://192.168.1.50` (port 80 is
      the pi-decoder default, so no port needed).
-   - `PC_HDMI_PORT` — which TV HDMI input the PC is on (1-4).
    - `ACTION_BY_IDX` — which button index (0–3) does what.
    - `BLU_COMPONENT` — the switch's component id (usually `bthomedevice:200`).
 3. **Confirm which idx is which physical button**: start the script, open its

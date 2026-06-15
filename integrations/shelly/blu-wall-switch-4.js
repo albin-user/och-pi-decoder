@@ -9,15 +9,14 @@
 // already-decoded button events and POSTs to the Pi's existing REST API.
 //
 // Button mapping (as requested):
-//   Button 1 -> toggle TV power      POST /api/cec/toggle
-//   Button 2 -> volume up            POST /api/cec/volume-up
-//   Button 3 -> switch to PC HDMI    POST /api/cec/input  {port: PC_HDMI_PORT}
-//   Button 4 -> volume down          POST /api/cec/volume-down
+//   toggle TV power           POST /api/cec/toggle
+//   volume up                 POST /api/cec/volume-up
+//   switch to the Pi/decoder  POST /api/cec/active-source
+//   volume down               POST /api/cec/volume-down
 //
-// SETUP — three things to fill in below:
+// SETUP — two things to fill in below:
 //   1. PI_HOST       the Pi's address on the LAN.
-//   2. PC_HDMI_PORT  which TV HDMI input the PC is on (1-4).
-//   3. ACTION_BY_IDX which button index does what (verify with the log).
+//   2. ACTION_BY_IDX which button index does what (verify with the log).
 //
 // How this device reports buttons: the BLU Wall Switch 4 shows up as ONE
 // component (e.g. bthomedevice:200), and each press carries an `idx` field
@@ -38,17 +37,13 @@ let CONFIG = {
   //    DNS issues from the plug.
   PI_HOST: "http://192.168.1.50",
 
-  // 2. TV HDMI input the PC is plugged into (1-4). Switches to it.
-  PC_HDMI_PORT: 2,
-
-  // 3. Button index (idx 0-3 from the event) -> action. Defaults assume
-  //    idx 0=button1 .. idx 3=button4; confirm with the log and reorder if
-  //    your physical layout differs. Valid actions: "toggle", "volume_up",
-  //    "volume_down", "source_pc".
+  // 2. Button index (idx 0-3 from the event) -> action. Confirm the idx of
+  //    each physical button with the log and reorder if needed. Valid actions:
+  //    "toggle", "volume_up", "volume_down", "source_pi".
   ACTION_BY_IDX: {
     0: "toggle",       // toggle TV power
+    1: "source_pi",    // switch TV to the Pi/decoder (CEC active source)
     2: "volume_up",    // volume up
-    1: "source_pc",    // switch to PC HDMI
     3: "volume_down",  // volume down
   },
 
@@ -94,8 +89,9 @@ function doAction(action) {
     postPi("/api/cec/volume-up", { steps: CONFIG.VOLUME_STEPS });
   } else if (action === "volume_down") {
     postPi("/api/cec/volume-down", { steps: CONFIG.VOLUME_STEPS });
-  } else if (action === "source_pc") {
-    postPi("/api/cec/input", { port: CONFIG.PC_HDMI_PORT });
+  } else if (action === "source_pi") {
+    // Make the Pi the active source — switches the TV to the decoder video.
+    postPi("/api/cec/active-source", null);
   } else {
     print("Unknown action:", action);
   }
