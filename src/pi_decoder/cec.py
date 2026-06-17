@@ -79,6 +79,9 @@ async def _run_cec(command: str) -> str:
     Serialised by _cec_lock — concurrent subprocess invocations would collide
     on /dev/cec0 (EBUSY). Queued callers wait for their turn.
     """
+    # cec-client re-claims the adapter's logical address and clears it on exit,
+    # which undoes the volume path's Playback registration.
+    _invalidate_audio_ready()
     lock = _get_lock()
     async with lock:
         proc = await asyncio.create_subprocess_exec(
@@ -156,6 +159,7 @@ async def power_on() -> str:
     ok, _ = await _cec_ctl_registered("--to", "0", "--image-view-on")
     log.info("CEC power on: %s", "sent" if ok else "FAILED")
     await _invalidate_power_cache()
+    _invalidate_audio_ready()  # power change can drop System Audio Mode
     return "sent" if ok else "failed"
 
 
@@ -164,6 +168,7 @@ async def standby() -> str:
     ok, _ = await _cec_ctl_registered("--to", "0", "--standby")
     log.info("CEC standby: %s", "sent" if ok else "FAILED")
     await _invalidate_power_cache()
+    _invalidate_audio_ready()  # power change can drop System Audio Mode
     return "sent" if ok else "failed"
 
 
@@ -243,17 +248,32 @@ async def set_input(port: int) -> str:
 # rig (Samsung TV + Sony HT-SF150 soundbar) the soundbar only honours CEC
 # volume once it has been put into *System Audio Mode*, and only from a
 # *registered* initiator. Sending volume key-presses to the TV (LA 0), or from
-# an unregistered adapter, is silently ignored. So each burst:
-#   1. registers the adapter as a Playback device — cec-ctl is "Unregistered"
-#      by default, and any cec-client scan (e.g. audio detection) wipes a prior
-#      registration, so we re-assert it every time;
-#   2. sends <System Audio Mode Request> to LA 5 (idempotent; soundbar stays on);
-#   3. sends the volume key-presses to LA 5.
-# cec-ctl (~10-500ms) is used instead of cec-client (~3-5s bus init) so the wall
-# switch / Companion stay responsive.
+# an unregistered adapter, is silently ignored. So a volume burst needs:
+#   1. the adapter registered as a Playback device (cec-ctl is "Unregistered"
+#      by default);
+#   2. the soundbar in System Audio Mode (<System Audio Mode Request> to LA 5);
+#   3. the volume key-presses to LA 5.
+# Steps 1+2 cost ~0.65s; the taps are ~0.15s each once armed. So we ARM ONCE and
+# cache it (_arm_audio): repeat presses skip straight to the taps. The cache is
+# invalidated when something can undo it — a cec-client scan wipes the LA, and a
+# TV power change can drop System Audio Mode — plus a TTL backstop. cec-ctl is
+# used throughout instead of cec-client (~3-5s bus init) for responsiveness.
 
 _AUDIO_LA = "5"                  # CEC logical address of the audio system
 _DEFAULT_PHYS_ADDR = "2.0.0.0"   # Pi's HDMI physical address (fallback only)
+_AUDIO_READY_TTL = 20.0          # seconds the armed (registered + SAM) state is trusted
+_audio_ready_until = 0.0         # monotonic deadline; 0 = must re-arm
+
+
+def _invalidate_audio_ready() -> None:
+    """Force the next volume burst to re-register and re-send the SAM request.
+
+    Called whenever the armed state may have been undone: a cec-client scan
+    clears the adapter's logical address, and a TV power change can drop the
+    soundbar out of System Audio Mode.
+    """
+    global _audio_ready_until
+    _audio_ready_until = 0.0
 
 # cec-ctl --ui-cmd values for each key.
 _UI_KEYS: dict[str, str] = {
@@ -315,11 +335,28 @@ async def _register_playback() -> str:
     return _DEFAULT_PHYS_ADDR
 
 
+async def _arm_audio() -> None:
+    """Ensure the adapter is registered and the soundbar is in System Audio Mode.
+
+    Cheap to call repeatedly: it re-arms at most once per _AUDIO_READY_TTL (or
+    after an explicit _invalidate_audio_ready()), otherwise it's a no-op. Must be
+    called with the CEC lock held.
+    """
+    global _audio_ready_until
+    if time.monotonic() < _audio_ready_until:
+        return
+    phys = await _register_playback()
+    # Put the soundbar into System Audio Mode (idempotent; it stays on).
+    await _run_cec_ctl("--to", _AUDIO_LA, "--system-audio-mode-request",
+                       f"phys-addr={phys}")
+    _audio_ready_until = time.monotonic() + _AUDIO_READY_TTL
+
+
 async def _audio_key_burst(key: str, steps: int) -> dict:
     """Send `steps` volume key-presses to the audio system (LA 5).
 
-    Registers as Playback, enables System Audio Mode, then taps — see the module
-    comment above for why all three are needed. 'Fire now or drop': if another
+    Arms the audio path (register + System Audio Mode, cached) then taps — see
+    the module comment for why those are needed. 'Fire now or drop': if another
     CEC call is in flight we drop rather than queue, so a held button can't keep
     changing volume after the user stops. Returns {"ok", "sent", "dropped"}.
     """
@@ -334,10 +371,7 @@ async def _audio_key_burst(key: str, steps: int) -> dict:
     ui_cmd = _UI_KEYS[key]
     lock = _get_lock()
     async with lock:
-        phys = await _register_playback()
-        # Put the soundbar into System Audio Mode (idempotent; it stays on).
-        await _run_cec_ctl("--to", _AUDIO_LA, "--system-audio-mode-request",
-                           f"phys-addr={phys}")
+        await _arm_audio()
         sent = 0
         for _ in range(steps):
             if not await _run_cec_ctl("--to", _AUDIO_LA,
@@ -393,6 +427,9 @@ async def detect_audio_system(timeout: float = 15.0) -> dict | None:
     Returns a dict with keys: {"logical_addr", "phys_addr", "vendor", "osd"}.
     phys_addr is the integer form (e.g. 0x3000 for "3.0.0.0").
     """
+    # The cec-client scan re-claims the adapter's logical address, undoing the
+    # volume path's Playback registration — force a re-arm on the next burst.
+    _invalidate_audio_ready()
     lock = _get_lock()
     async with lock:
         try:
