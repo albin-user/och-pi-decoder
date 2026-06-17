@@ -103,15 +103,19 @@ class TestPowerCommands:
 
     @pytest.mark.asyncio
     async def test_power_on(self):
-        with patch("pi_decoder.cec._run_cec", new_callable=AsyncMock, return_value="power on sent"):
+        with patch("pi_decoder.cec._cec_ctl_registered", new_callable=AsyncMock,
+                   return_value=(True, "")) as mock_ctl:
             result = await cec.power_on()
-        assert "power on sent" in result
+        assert result == "sent"
+        assert "--image-view-on" in mock_ctl.call_args.args
 
     @pytest.mark.asyncio
     async def test_standby(self):
-        with patch("pi_decoder.cec._run_cec", new_callable=AsyncMock, return_value="standby sent"):
+        with patch("pi_decoder.cec._cec_ctl_registered", new_callable=AsyncMock,
+                   return_value=(True, "")) as mock_ctl:
             result = await cec.standby()
-        assert "standby sent" in result
+        assert result == "sent"
+        assert "--standby" in mock_ctl.call_args.args
 
     @pytest.mark.asyncio
     async def test_toggle_on_when_off(self):
@@ -151,43 +155,51 @@ class TestPowerCommands:
 
     @pytest.mark.asyncio
     async def test_get_power_status_on(self):
-        with patch("pi_decoder.cec._run_cec", new_callable=AsyncMock,
-                    return_value="power status: on\n"):
+        with patch("pi_decoder.cec._cec_ctl_registered", new_callable=AsyncMock,
+                   return_value=(True, "\tpwr-state: on (0x00)\n")):
             result = await cec.get_power_status()
         assert result == "on"
 
     @pytest.mark.asyncio
     async def test_get_power_status_standby(self):
-        with patch("pi_decoder.cec._run_cec", new_callable=AsyncMock,
-                    return_value="power status: standby\n"):
+        with patch("pi_decoder.cec._cec_ctl_registered", new_callable=AsyncMock,
+                   return_value=(True, "\tpwr-state: standby (0x01)\n")):
             result = await cec.get_power_status()
         assert result == "standby"
 
     @pytest.mark.asyncio
+    async def test_get_power_status_transition_to_on(self):
+        """pwr-state 0x02 (transition to on) reads as 'on'."""
+        with patch("pi_decoder.cec._cec_ctl_registered", new_callable=AsyncMock,
+                   return_value=(True, "\tpwr-state: in transition standby to on (0x02)\n")):
+            result = await cec.get_power_status()
+        assert result == "on"
+
+    @pytest.mark.asyncio
     async def test_get_power_status_unknown(self):
-        with patch("pi_decoder.cec._run_cec", new_callable=AsyncMock,
-                    return_value="some garbage output\n"):
+        with patch("pi_decoder.cec._cec_ctl_registered", new_callable=AsyncMock,
+                   return_value=(True, "some garbage output\n")):
             result = await cec.get_power_status()
         assert result == "unknown"
 
     @pytest.mark.asyncio
     async def test_get_power_status_uses_cache(self):
-        """Second call within TTL returns cached value without spawning cec-client."""
-        mock = AsyncMock(return_value="power status: on\n")
-        with patch("pi_decoder.cec._run_cec", mock):
+        """Second call within TTL returns cached value without re-querying."""
+        mock = AsyncMock(return_value=(True, "\tpwr-state: on (0x00)\n"))
+        with patch("pi_decoder.cec._cec_ctl_registered", mock):
             result1 = await cec.get_power_status()
             result2 = await cec.get_power_status()
         assert result1 == result2 == "on"
-        mock.assert_called_once()  # Only one subprocess spawned
+        mock.assert_called_once()  # Only one query
 
     @pytest.mark.asyncio
     async def test_get_power_status_cache_expires(self):
-        """After TTL expires, a fresh cec-client query is made."""
+        """After TTL expires, a fresh query is made."""
         mock = AsyncMock(side_effect=[
-            "power status: on\n",
-            "power status: standby\n",
+            (True, "\tpwr-state: on (0x00)\n"),
+            (True, "\tpwr-state: standby (0x01)\n"),
         ])
-        with patch("pi_decoder.cec._run_cec", mock):
+        with patch("pi_decoder.cec._cec_ctl_registered", mock):
             result1 = await cec.get_power_status()
             assert result1 == "on"
             # Force cache expiry
@@ -198,33 +210,30 @@ class TestPowerCommands:
 
     @pytest.mark.asyncio
     async def test_get_power_status_error_returns_unknown(self):
-        """If cec-client fails, return 'unknown' instead of crashing."""
-        mock = AsyncMock(side_effect=Exception("cec-client crashed"))
-        with patch("pi_decoder.cec._run_cec", mock):
+        """If the cec-ctl query fails (ok=False), return 'unknown'."""
+        with patch("pi_decoder.cec._cec_ctl_registered", new_callable=AsyncMock,
+                   return_value=(False, "")):
             result = await cec.get_power_status()
         assert result == "unknown"
 
     @pytest.mark.asyncio
     async def test_power_on_invalidates_cache(self):
         """power_on() should invalidate cache so next status query is fresh."""
-        mock_run = AsyncMock(return_value="power status: standby\n")
-        with patch("pi_decoder.cec._run_cec", mock_run):
+        mock = AsyncMock(return_value=(True, "\tpwr-state: standby (0x01)\n"))
+        with patch("pi_decoder.cec._cec_ctl_registered", mock):
             # Prime the cache
             await cec.get_power_status()
             assert cec._power_cache == "standby"
-            # power_on should invalidate
-            mock_run.return_value = "power on sent"
             await cec.power_on()
             assert cec._power_cache_time == 0.0
 
     @pytest.mark.asyncio
     async def test_standby_invalidates_cache(self):
         """standby() should invalidate cache so next status query is fresh."""
-        mock_run = AsyncMock(return_value="power status: on\n")
-        with patch("pi_decoder.cec._run_cec", mock_run):
+        mock = AsyncMock(return_value=(True, "\tpwr-state: on (0x00)\n"))
+        with patch("pi_decoder.cec._cec_ctl_registered", mock):
             await cec.get_power_status()
             assert cec._power_cache == "on"
-            mock_run.return_value = "standby sent"
             await cec.standby()
             assert cec._power_cache_time == 0.0
 
@@ -296,9 +305,13 @@ class TestSourceCommands:
 
     @pytest.mark.asyncio
     async def test_active_source(self):
-        with patch("pi_decoder.cec._run_cec", new_callable=AsyncMock, return_value="as sent"):
+        with patch("pi_decoder.cec._pi_phys_addr", new_callable=AsyncMock, return_value="2.0.0.0"), \
+             patch("pi_decoder.cec._cec_ctl_registered", new_callable=AsyncMock,
+                   return_value=(True, "")) as mock_ctl:
             result = await cec.active_source()
-        assert "as sent" in result
+        assert result == "sent"
+        assert "--active-source" in mock_ctl.call_args.args
+        assert "phys-addr=2.0.0.0" in mock_ctl.call_args.args
 
     @pytest.mark.asyncio
     async def test_set_input_valid(self):
