@@ -99,6 +99,50 @@ async def _run_cec(command: str) -> str:
             raise TimeoutError(f"cec-client timed out after {_TIMEOUT}s")
 
 
+_phys_addr: str | None = None  # Pi's HDMI physical address, detected once
+
+
+async def _cec_ctl_registered(*args: str, timeout: float | None = None) -> tuple[bool, str]:
+    """Run `cec-ctl --playback <args>` under the adapter lock; return (ok, stdout).
+
+    The fast path for power / status / active-source: ~0.1-0.8s vs ~3-5s for
+    cec-client (which re-inits the whole bus each call). Always registers as a
+    Playback device first — an Unregistered cec-ctl is silently ignored by the
+    TV/soundbar, and a cec-client scan (audio detection) wipes a prior
+    registration, so we re-assert it every call.
+    """
+    cmd = ["sudo", "-n", "cec-ctl", "--playback", "--osd-name", _CEC_OSD_NAME, *args]
+    lock = _get_lock()
+    async with lock:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            stdout, _ = await asyncio.wait_for(
+                proc.communicate(), timeout=timeout or _KEY_TIMEOUT)
+            return proc.returncode == 0, stdout.decode(errors="replace")
+        except asyncio.TimeoutError:
+            log.warning("cec-ctl %s timed out", args)
+            return False, ""
+        except Exception as e:
+            log.warning("cec-ctl %s error: %s", args, e)
+            return False, ""
+
+
+async def _pi_phys_addr() -> str:
+    """Pi's HDMI physical address (e.g. '2.0.0.0'), detected once and cached.
+
+    Needed as the source address for the <Active Source> broadcast. Parsed from
+    cec-ctl's own registration output via _register_playback().
+    """
+    global _phys_addr
+    if _phys_addr is None:
+        _phys_addr = await _register_playback()
+    return _phys_addr
+
+
 # ── Power ─────────────────────────────────────────────────────────
 
 async def _invalidate_power_cache() -> None:
@@ -108,26 +152,28 @@ async def _invalidate_power_cache() -> None:
 
 
 async def power_on() -> str:
-    """Turn TV on (address 0 = TV)."""
-    output = await _run_cec("on 0")
-    log.info("CEC power on: %s", output.strip()[-80:])
+    """Turn TV on via <Image View On> (fast cec-ctl path)."""
+    ok, _ = await _cec_ctl_registered("--to", "0", "--image-view-on")
+    log.info("CEC power on: %s", "sent" if ok else "FAILED")
     await _invalidate_power_cache()
-    return output
+    return "sent" if ok else "failed"
 
 
 async def standby() -> str:
-    """Put TV in standby."""
-    output = await _run_cec("standby 0")
-    log.info("CEC standby: %s", output.strip()[-80:])
+    """Put TV in standby (fast cec-ctl path)."""
+    ok, _ = await _cec_ctl_registered("--to", "0", "--standby")
+    log.info("CEC standby: %s", "sent" if ok else "FAILED")
     await _invalidate_power_cache()
-    return output
+    return "sent" if ok else "failed"
 
 
 async def get_power_status() -> str:
     """Query TV power status with TTL cache.
 
-    Returns 'on', 'standby', or 'unknown'.  Only spawns one cec-client
-    process per TTL window regardless of how many WebSocket clients ask.
+    Returns 'on', 'standby', or 'unknown'.  Uses cec-ctl (~0.7s) instead of
+    cec-client (~3.4s); only one query per TTL window regardless of how many
+    WebSocket clients ask. Parses the REPORT_POWER_STATUS reply's pwr-state hex:
+    0x00=on, 0x01=standby, 0x02=transition→on, 0x03=transition→standby.
     """
     global _power_cache, _power_cache_time
 
@@ -135,18 +181,17 @@ async def get_power_status() -> str:
     if now - _power_cache_time < _POWER_CACHE_TTL:
         return _power_cache
 
-    # _run_cec serialises subprocess access, so no extra lock needed here.
-    try:
-        output = await _run_cec("pow 0")
-        lower = output.lower()
-        if "power status: on" in lower:
-            status = "on"
-        elif "power status: standby" in lower:
-            status = "standby"
-        else:
-            status = "unknown"
-    except Exception:
-        status = "unknown"
+    status = "unknown"
+    ok, output = await _cec_ctl_registered("--to", "0", "--give-device-power-status")
+    if ok:
+        for line in output.splitlines():
+            low = line.lower()
+            if "pwr-state" in low:
+                if "0x00" in low or "0x02" in low:
+                    status = "on"
+                elif "0x01" in low or "0x03" in low:
+                    status = "standby"
+                break
 
     _power_cache = status
     _power_cache_time = time.monotonic()
@@ -172,10 +217,15 @@ async def toggle() -> str:
 # ── Source / Input ────────────────────────────────────────────────
 
 async def active_source() -> str:
-    """Make Pi the active HDMI source."""
-    output = await _run_cec("as")
-    log.info("CEC active source: %s", output.strip()[-80:])
-    return output
+    """Make the Pi the active HDMI source (fast cec-ctl path).
+
+    Broadcasts <Active Source> for the Pi's physical address — the TV switches
+    to the Pi's input. ~0.8s via cec-ctl vs ~3.8s via cec-client.
+    """
+    pa = await _pi_phys_addr()
+    ok, _ = await _cec_ctl_registered("--active-source", f"phys-addr={pa}")
+    log.info("CEC active source (%s): %s", pa, "sent" if ok else "FAILED")
+    return "sent" if ok else "failed"
 
 
 async def set_input(port: int) -> str:
