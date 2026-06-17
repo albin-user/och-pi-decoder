@@ -340,6 +340,7 @@ class TestVolumeCommands:
 
     def setup_method(self):
         cec._cec_lock = None
+        cec._audio_ready_until = 0.0  # force re-arm each test
 
     @pytest.mark.asyncio
     async def test_volume_up_default_1_step(self):
@@ -428,6 +429,39 @@ class TestVolumeCommands:
              patch("pi_decoder.cec._run_cec_ctl", new_callable=AsyncMock, side_effect=side_effects):
             result = await cec.volume_up(steps=4)
         assert result["sent"] == 2  # stops after the 3rd press fails
+
+    @pytest.mark.asyncio
+    async def test_second_burst_within_ttl_skips_arming(self):
+        """The register + SAM handshake is cached: a second burst within the TTL
+        doesn't re-register (the speed win)."""
+        with patch("pi_decoder.cec._register_playback", new_callable=AsyncMock, return_value="2.0.0.0") as mock_reg, \
+             patch("pi_decoder.cec._run_cec_ctl", new_callable=AsyncMock, return_value=True) as mock_ctl:
+            await cec.volume_up()
+            sam_after_first = [c for c in mock_ctl.call_args_list if "--system-audio-mode-request" in c.args]
+            await cec.volume_up()
+        assert mock_reg.call_count == 1  # registered only once
+        assert len(sam_after_first) == 1  # SAM sent only on the first burst
+
+    @pytest.mark.asyncio
+    async def test_invalidate_forces_rearm(self):
+        """After _invalidate_audio_ready(), the next burst re-registers."""
+        with patch("pi_decoder.cec._register_playback", new_callable=AsyncMock, return_value="2.0.0.0") as mock_reg, \
+             patch("pi_decoder.cec._run_cec_ctl", new_callable=AsyncMock, return_value=True):
+            await cec.volume_up()
+            cec._invalidate_audio_ready()
+            await cec.volume_up()
+        assert mock_reg.call_count == 2  # re-armed after invalidation
+
+    @pytest.mark.asyncio
+    async def test_power_change_invalidates_audio_ready(self):
+        """standby()/power_on() drop the cached armed state (SAM may reset)."""
+        with patch("pi_decoder.cec._register_playback", new_callable=AsyncMock, return_value="2.0.0.0") as mock_reg, \
+             patch("pi_decoder.cec._run_cec_ctl", new_callable=AsyncMock, return_value=True), \
+             patch("pi_decoder.cec._cec_ctl_registered", new_callable=AsyncMock, return_value=(True, "")):
+            await cec.volume_up()
+            await cec.standby()
+            await cec.volume_up()
+        assert mock_reg.call_count == 2  # re-armed after the power change
 
 
 class TestRegisterPlayback:
